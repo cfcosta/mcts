@@ -124,11 +124,25 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         };
         let mut best_offset = 0;
         let mut best_score = score(&child_nodes[0]);
-        for (offset, child) in child_nodes[1..].iter().enumerate() {
+        let mut offset = 1;
+        let mut pairs = child_nodes[1..].chunks_exact(2);
+        for pair in &mut pairs {
+            let first_score = score(&pair[0]);
+            let second_score = score(&pair[1]);
+            if first_score.partial_cmp(&best_score).unwrap().is_ge() {
+                best_offset = offset;
+                best_score = first_score;
+            }
+            if second_score.partial_cmp(&best_score).unwrap().is_ge() {
+                best_offset = offset + 1;
+                best_score = second_score;
+            }
+            offset += 2;
+        }
+        if let [child] = pairs.remainder() {
             let child_score = score(child);
             if child_score.partial_cmp(&best_score).unwrap().is_ge() {
-                best_offset = offset + 1;
-                best_score = child_score;
+                best_offset = offset;
             }
         }
         first + best_offset
