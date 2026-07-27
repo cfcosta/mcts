@@ -32,6 +32,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
     pub fn search(&mut self, n: usize) -> S::Action {
         let current_visits = self.arena.get_node(self.root_id).n;
         let cached_visits = current_visits.saturating_add(n);
+        let mut cache_ready = self.inverse_sqrt.len() > cached_visits;
 
         for _ in 0..n {
             let mut selected_id: usize = self.select();
@@ -39,7 +40,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             if !selected_node.state.is_terminal() {
                 self.expand(selected_id);
                 let children: &Vec<usize> = &self.arena.get_node(selected_id).children;
-                if children.len() > 1 && self.inverse_sqrt.len() <= cached_visits {
+                if !cache_ready && children.len() > 1 {
                     let uncached = self.inverse_sqrt.len()..=cached_visits;
                     self.inverse_sqrt.extend(
                         uncached
@@ -48,6 +49,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
                     );
                     self.sqrt_log
                         .extend(uncached.map(|n| (n as f64).ln().sqrt()));
+                    cache_ready = true;
                 }
                 let random_child: usize = children.choose(&mut rand::thread_rng()).unwrap().clone();
                 selected_id = random_child;
