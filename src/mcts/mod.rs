@@ -146,7 +146,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             "expanded children must remain contiguous"
         );
         let child_nodes = &self.arena.nodes[first..first + parent.children.len()];
-        if child_nodes.len() >= 16 && child_nodes[0].n == 0 {
+        if child_nodes.len() >= 8 && child_nodes[0].n == 0 {
             let offset = child_nodes
                 .iter()
                 .rposition(|child| child.n == 0)
