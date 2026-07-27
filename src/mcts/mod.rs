@@ -41,25 +41,20 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             let selected_node: &Node<S> = self.arena.get_node(selected_id);
             if !selected_node.state.is_terminal() {
                 self.expand(selected_id);
-                let children = &self.arena.get_node(selected_id).children;
-                if children.len() > 1 {
+                let child_count = self.arena.get_node(selected_id).children.len();
+                if child_count > 1 {
                     if !inverse_ready {
-                        self.inverse_sqrt.extend(
-                            (self.inverse_sqrt.len()..=cached_visits)
-                                .map(|n| 1.0 / (n as f64).sqrt()),
-                        );
+                        self.extend_inverse_sqrt(cached_visits);
                         inverse_ready = true;
                     }
                     // Parent factors are most useful when a long search or a
                     // very wide scan amortizes their eager construction.
-                    if !factors_ready && (cached_visits >= 4_096 || children.len() >= 256) {
-                        self.sqrt_log.extend(
-                            (self.sqrt_log.len()..=cached_visits)
-                                .map(|n| (n as f64).ln().sqrt()),
-                        );
+                    if !factors_ready && (cached_visits >= 4_096 || child_count >= 256) {
+                        self.extend_sqrt_log(cached_visits);
                         factors_ready = true;
                     }
                 }
+                let children = &self.arena.get_node(selected_id).children;
                 let random_child: usize = children.choose(&mut rng).unwrap().clone();
                 selected_id = random_child;
             }
@@ -80,6 +75,22 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
 
         let best_action: S::Action = self.arena.get_node(best_child).action;
         best_action
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn extend_inverse_sqrt(&mut self, cached_visits: usize) {
+        self.inverse_sqrt.extend(
+            (self.inverse_sqrt.len()..=cached_visits).map(|n| 1.0 / (n as f64).sqrt()),
+        );
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn extend_sqrt_log(&mut self, cached_visits: usize) {
+        self.sqrt_log.extend(
+            (self.sqrt_log.len()..=cached_visits).map(|n| (n as f64).ln().sqrt()),
+        );
     }
 
     fn select(&mut self) -> usize {
