@@ -11,7 +11,7 @@ fi
 # This fixed-work driver mirrors representative cases from benches/mcts.rs.
 # Unlike Criterion's long statistical runs, it completes quickly enough for
 # an autonomous loop while retaining broad end-to-end and hot-path coverage.
-taskset -c 0 cargo run \
+taskset -c 6 cargo run \
   --release \
   --quiet \
   --manifest-path .auto/bench/Cargo.toml

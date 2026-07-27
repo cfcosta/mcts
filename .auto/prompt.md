@@ -10,7 +10,7 @@ Improve the real performance of the generic MCTS implementation and bundled game
 The primary workload covers empty and midgame end-to-end searches for both bundled games, deep selection/backpropagation, wide expansion/UCB scans, Ultimate Tic-Tac-Toe rollout, and state stepping. Periodically run broader benchmark groups when a structural change may expose a tradeoff.
 
 ## How to Run
-`./.auto/measure.sh` — enters a Nix shell providing `cargo` and `rustc`, runs the fixed-work harness in `.auto/bench/` pinned to one CPU, and emits `METRIC name=value` lines. The harness mirrors the corresponding cases in `benches/mcts.rs` but uses five batched medians because hard-coded Criterion measurement durations made an autonomous iteration take over 80 seconds.
+`./.auto/measure.sh` — enters a Nix shell providing `cargo` and `rustc`, runs the fixed-work harness pinned to CPU 6, and emits `METRIC name=value` lines. The harness mirrors the corresponding cases in `benches/mcts.rs` but uses five batched medians because hard-coded Criterion measurement durations made an autonomous iteration take over 80 seconds. CPU 6 was selected after CPU 0's SMT sibling became busy and unchanged reruns drifted 6-13%.
 
 `.auto/checks.sh` runs automatically after each successful measurement and executes the complete test suite with Cargo and Rust from Nix.
 
@@ -51,4 +51,5 @@ The primary workload covers empty and midgame end-to-end searches for both bundl
 - **Kept:** selection relies on the verified invariant that terminal nodes are leaves, avoiding terminal checks along already-expanded paths.
 - **Rejected:** reusing one ThreadRng/SmallRng handle, exact child `Vec` reserve, arena reserve-by-iterations, reusable expansion action buffer, scalar UCB algebra, direct contiguous-child slicing, final-q one-pass scan, eager inlining, and q-update branches. None improved the primary metric reliably.
 - **Rejected architectural prototype:** a compact hot-node sidecar improved the 512-deep chain ~9% but regressed empty TTT ~10%, duplicated public stats, and made public fields stale until synchronization. A true breaking hot/cold redesign remains promising.
-- Current fixed-work best is `geomean_ns=130931.560`, 69.9% below the fixed-work baseline. Full Criterion cross-checks showed 54-81% faster search at every 100/1k/10k budget and 61-64% faster full games before the latest additional wins.
+- Current fixed-work best is `geomean_ns=124938.001`, 71.3% below the fixed-work baseline. Latest full Criterion cross-check: every search budget/position is 66-82% faster; full-game TTT is 68% faster and full-game UTTT 77% faster versus the untouched `initial` baseline.
+- **Kept child layout:** immutable child lists use a 16-byte slice representation, store zero/one child inline, and allocate only for 2+ children. Current node sizes are TTT 64 B, UTTT 104 B, Chain 72 B, Wide 88 B (all 8 B smaller than the compact-state Vec layout); Valgrind memcheck found no errors or leaks.
