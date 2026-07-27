@@ -71,6 +71,7 @@ impl State for UltimateTicTacToe {
             self.macro_board_x,
             self.macro_board_o,
             self.next_board,
+            self.occupied,
         )
     }
 
@@ -252,6 +253,7 @@ fn determine_legal_actions(
     macro_board_x: u16,
     macro_board_o: u16,
     next_board: u8,
+    occupied: u8,
 ) -> Vec<(u8, u8, u8)> {
     if next_board < 9 {
         let next_board = next_board as usize;
@@ -259,8 +261,8 @@ fn determine_legal_actions(
         if ((macro_board_x | macro_board_o) & board_mask) == 0
             && (board_x[next_board] | board_o[next_board]) != 0x1FF
         {
-            let mut actions = Vec::with_capacity(9);
             let mut empty = !(board_x[next_board] | board_o[next_board]) & 0x1FF;
+            let mut actions = Vec::with_capacity(bit_count(empty) as usize);
             while empty != 0 {
                 let pos = empty.trailing_zeros() as u8;
                 actions.push((next_board as u8, pos / 3, pos % 3));
@@ -270,7 +272,7 @@ fn determine_legal_actions(
         }
     }
 
-    let mut actions = Vec::with_capacity(81);
+    let mut actions = Vec::with_capacity(81 - occupied as usize);
     for i in 0..9 {
         let mut empty = !(board_x[i] | board_o[i]) & 0x1FF;
         while empty != 0 {
