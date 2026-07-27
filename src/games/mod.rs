@@ -10,6 +10,27 @@ pub mod ultimate_tic_tac_toe;
 pub use tic_tac_toe::TicTacToe;
 pub use ultimate_tic_tac_toe::UltimateTicTacToe;
 
+const NTH_SET_BIT: [[u8; 9]; 512] = {
+    let mut table = [[0; 9]; 512];
+    let mut bits = 1;
+    while bits < table.len() {
+        let mut remaining = bits;
+        let mut rank = 0;
+        while remaining != 0 {
+            table[bits][rank] = remaining.trailing_zeros() as u8;
+            remaining &= remaining - 1;
+            rank += 1;
+        }
+        bits += 1;
+    }
+    table
+};
+
+#[inline]
+pub(crate) fn nth_set_bit(bits: u16, n: u32) -> u8 {
+    NTH_SET_BIT[bits as usize][n as usize]
+}
+
 /// Uniformly samples `[0, upper)` with Lemire's multiply-high method.
 /// Bundled games use this small concrete helper instead of monomorphizing the
 /// much larger generic `gen_range` machinery into each rollout selector.

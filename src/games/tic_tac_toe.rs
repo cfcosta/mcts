@@ -1,4 +1,4 @@
-use crate::games::random_below;
+use crate::games::{nth_set_bit, random_below};
 use crate::state::State;
 
 #[derive(Debug, Clone, Copy)]
@@ -66,18 +66,10 @@ impl State for TicTacToe {
     }
 
     fn get_random_legal_action(&self) -> Self::Action {
-        let occupied = self.board_x | self.board_o;
-        let empty = 9 - occupied.count_ones();
-        let mut target = random_below(empty);
-        for pos in 0u8..9 {
-            if occupied & (1 << pos) == 0 {
-                if target == 0 {
-                    return (pos / 3, pos % 3);
-                }
-                target -= 1;
-            }
-        }
-        unreachable!("non-terminal Tic-Tac-Toe state has no legal action")
+        let empty = !(self.board_x | self.board_o) & 0x1FF;
+        let rank = random_below(empty.count_ones());
+        let pos = nth_set_bit(empty, rank);
+        (pos / 3, pos % 3)
     }
 
     fn to_play(&self) -> usize {
