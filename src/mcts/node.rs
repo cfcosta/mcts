@@ -1,5 +1,37 @@
+use std::ops::Deref;
+
 use crate::mcts::arena::Arena;
 use crate::state::State;
+
+#[derive(Debug, Default)]
+pub struct Children(Box<[usize]>);
+
+impl Children {
+    pub fn as_slice(&self) -> &[usize] {
+        &self.0
+    }
+
+    pub(crate) fn from_range(first: usize, end: usize) -> Self {
+        Self((first..end).collect::<Vec<_>>().into_boxed_slice())
+    }
+}
+
+impl Deref for Children {
+    type Target = [usize];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> IntoIterator for &'a Children {
+    type Item = &'a usize;
+    type IntoIter = std::slice::Iter<'a, usize>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 #[derive(Debug)]
 pub struct Node<S: State> {
@@ -9,7 +41,7 @@ pub struct Node<S: State> {
     pub reward_sum: f64,
     pub n: usize, // number of visits
     pub q: f64,   // average reward
-    pub children: Vec<usize>,
+    pub children: Children,
 }
 
 impl<S: State> Node<S> {
@@ -21,7 +53,7 @@ impl<S: State> Node<S> {
             reward_sum: 0.0,
             n: 0,
             q: 0.0,
-            children: Vec::new(),
+            children: Children::default(),
         }
     }
 

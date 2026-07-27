@@ -3,7 +3,7 @@ pub mod node;
 
 use crate::state::State;
 use arena::Arena;
-use node::Node;
+use node::{Children, Node};
 
 use rand::seq::SliceRandom;
 
@@ -40,7 +40,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             let selected_node: &Node<S> = self.arena.get_node(selected_id);
             if !selected_node.state.is_terminal() {
                 self.expand(selected_id);
-                let children: &Vec<usize> = &self.arena.get_node(selected_id).children;
+                let children = &self.arena.get_node(selected_id).children;
                 if children.len() > 1 {
                     if !inverse_ready {
                         self.inverse_sqrt.extend(
@@ -132,12 +132,14 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let parent: &Node<S> = self.arena.get_node_mut(id);
         let legal_actions: Vec<S::Action> = parent.state.get_legal_actions();
         let parent_state: S = parent.state.clone();
+        let first_child = self.arena.nodes.len();
         for action in legal_actions {
             let state = parent_state.step(action);
             let new_node = Node::new(state, action, Some(id));
-            let new_id = self.arena.add_node(new_node);
-            self.arena.get_node_mut(id).children.push(new_id);
+            self.arena.add_node(new_node);
         }
+        let end = self.arena.nodes.len();
+        self.arena.get_node_mut(id).children = Children::from_range(first_child, end);
     }
 
     fn simulate(&self, id: usize) -> f64 {
