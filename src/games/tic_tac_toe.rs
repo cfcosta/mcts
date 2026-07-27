@@ -1,4 +1,5 @@
 use crate::state::State;
+use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TicTacToe {
@@ -50,6 +51,21 @@ impl State for TicTacToe {
 
     fn get_legal_actions(&self) -> Vec<Self::Action> {
         determine_legal_actions(self.board_x, self.board_o)
+    }
+
+    fn get_random_legal_action(&self) -> Self::Action {
+        let occupied = self.board_x | self.board_o;
+        let empty = 9 - occupied.count_ones();
+        let mut target = rand::thread_rng().gen_range(0..empty);
+        for pos in 0u8..9 {
+            if occupied & (1 << pos) == 0 {
+                if target == 0 {
+                    return (pos / 3, pos % 3);
+                }
+                target -= 1;
+            }
+        }
+        unreachable!("non-terminal Tic-Tac-Toe state has no legal action")
     }
 
     fn to_play(&self) -> usize {

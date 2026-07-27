@@ -1,4 +1,5 @@
 use crate::state::State;
+use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 pub struct UltimateTicTacToe {
@@ -58,6 +59,48 @@ impl State for UltimateTicTacToe {
             self.macro_board_o,
             self.next_board,
         )
+    }
+
+    fn get_random_legal_action(&self) -> Self::Action {
+        if self.next_board < 9 {
+            let board = self.next_board as usize;
+            let board_mask = 1 << board;
+            let occupied = self.board_x[board] | self.board_o[board];
+            if ((self.macro_board_x | self.macro_board_o) & board_mask) == 0
+                && occupied != 0x1FF
+            {
+                let empty = 9 - occupied.count_ones();
+                let mut target = rand::thread_rng().gen_range(0..empty);
+                for pos in 0u8..9 {
+                    if occupied & (1 << pos) == 0 {
+                        if target == 0 {
+                            return (board as u8, pos / 3, pos % 3);
+                        }
+                        target -= 1;
+                    }
+                }
+            }
+        }
+
+        let empty: u32 = self
+            .board_x
+            .iter()
+            .zip(&self.board_o)
+            .map(|(&x, &o)| 9 - (x | o).count_ones())
+            .sum();
+        let mut target = rand::thread_rng().gen_range(0..empty);
+        for board in 0..9 {
+            let occupied = self.board_x[board] | self.board_o[board];
+            for pos in 0u8..9 {
+                if occupied & (1 << pos) == 0 {
+                    if target == 0 {
+                        return (board as u8, pos / 3, pos % 3);
+                    }
+                    target -= 1;
+                }
+            }
+        }
+        unreachable!("non-terminal Ultimate Tic-Tac-Toe state has no legal action")
     }
 
     fn to_play(&self) -> usize {

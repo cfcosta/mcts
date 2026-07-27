@@ -78,12 +78,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let node: &Node<S> = self.arena.get_node(id);
         let mut state: S = node.state.clone();
         while !state.is_terminal() {
-            let legal_actions = state.get_legal_actions();
-            let action = legal_actions
-                .choose(&mut rand::thread_rng())
-                .unwrap()
-                .clone();
-            state = state.step(action);
+            state = state.step(state.get_random_legal_action());
         }
         let reward: f64 = state.reward(node.state.to_play()) as f64;
         reward
