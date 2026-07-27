@@ -12,6 +12,7 @@ pub struct Mcts<S: State> {
     pub root_id: usize,
     c: f64,
     inverse_sqrt: Vec<f64>,
+    sqrt_log: Vec<f64>,
 }
 
 impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
@@ -24,14 +25,18 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             root_id,
             c,
             inverse_sqrt: vec![f64::INFINITY],
+            sqrt_log: vec![0.0],
         }
     }
 
     pub fn search(&mut self, n: usize) -> S::Action {
         let current_visits = self.arena.get_node(self.root_id).n;
         let cached_visits = current_visits.saturating_add(n);
+        let uncached = self.inverse_sqrt.len()..=cached_visits;
         self.inverse_sqrt
-            .extend((self.inverse_sqrt.len()..=cached_visits).map(|n| 1.0 / (n as f64).sqrt()));
+            .extend(uncached.clone().map(|n| 1.0 / (n as f64).sqrt()));
+        self.sqrt_log
+            .extend(uncached.map(|n| (n as f64).ln().sqrt()));
 
         for _ in 0..n {
             let mut selected_id: usize = self.select();
@@ -82,7 +87,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             return first;
         }
 
-        let exploration = self.c * (parent.n as f64).ln().sqrt();
+        let exploration = self.c * self.sqrt_log[parent.n];
         let score = |id: usize| {
             let child = self.arena.get_node(id);
             if child.n == 0 {
