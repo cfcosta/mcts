@@ -1,4 +1,4 @@
-use crate::games::{nth_set_bit, random_below};
+use crate::games::{bit_count, nth_set_bit, random_below};
 use crate::state::State;
 
 #[derive(Debug, Clone, Copy)]
@@ -79,7 +79,7 @@ impl State for UltimateTicTacToe {
             let board_mask = 1 << board;
             let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
             if ((self.macro_board_x | self.macro_board_o) & board_mask) == 0 && empty != 0 {
-                let target = random_below(empty.count_ones());
+                let target = random_below(bit_count(empty));
                 let pos = nth_set_bit(empty, target);
                 return (board as u8, pos / 3, pos % 3);
             }
@@ -89,12 +89,12 @@ impl State for UltimateTicTacToe {
             .board_x
             .iter()
             .zip(&self.board_o)
-            .map(|(&x, &o)| (!(x | o) & 0x1FF).count_ones())
+            .map(|(&x, &o)| bit_count(!(x | o) & 0x1FF))
             .sum();
         let mut target = random_below(empty_count);
         for board in 0..9 {
             let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
-            empty_count = empty.count_ones();
+            empty_count = bit_count(empty);
             if target < empty_count {
                 let pos = nth_set_bit(empty, target);
                 return (board as u8, pos / 3, pos % 3);

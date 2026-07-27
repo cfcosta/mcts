@@ -10,6 +10,21 @@ pub mod ultimate_tic_tac_toe;
 pub use tic_tac_toe::TicTacToe;
 pub use ultimate_tic_tac_toe::UltimateTicTacToe;
 
+const BIT_COUNT: [u8; 512] = {
+    let mut table = [0; 512];
+    let mut bits = 1;
+    while bits < table.len() {
+        table[bits] = table[bits >> 1] + (bits & 1) as u8;
+        bits += 1;
+    }
+    table
+};
+
+#[inline]
+pub(crate) fn bit_count(bits: u16) -> u32 {
+    u32::from(BIT_COUNT[bits as usize])
+}
+
 const NTH_SET_BIT: [[u8; 9]; 512] = {
     let mut table = [[0; 9]; 512];
     let mut bits = 1;
