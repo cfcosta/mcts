@@ -101,7 +101,7 @@ impl<S: State> Node<S> {
     }
 
     pub fn is_leaf(&self) -> bool {
-        self.children.is_empty()
+        self.children.len == 0
     }
 
     pub fn ucb(&self, arena: &Arena<S>, c: f64) -> f64 {
