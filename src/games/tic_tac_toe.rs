@@ -1,4 +1,4 @@
-use crate::games::{bit_count, nth_set_bit, random_below};
+use crate::games::{bit_count, nth_empty_cell, random_below};
 use crate::state::State;
 
 #[derive(Debug, Clone, Copy)]
@@ -68,8 +68,7 @@ impl State for TicTacToe {
     fn get_random_legal_action<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Self::Action {
         let empty = !(self.board_x | self.board_o) & 0x1FF;
         let rank = random_below(rng, bit_count(empty));
-        let pos = nth_set_bit(empty, rank);
-        (pos / 3, pos % 3)
+        nth_empty_cell(empty, rank)
     }
 
     fn to_play(&self) -> usize {

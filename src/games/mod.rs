@@ -25,14 +25,15 @@ pub(crate) fn bit_count(bits: u16) -> u32 {
     u32::from(BIT_COUNT[bits as usize])
 }
 
-const NTH_SET_BIT: [[u8; 9]; 512] = {
+const NTH_EMPTY_CELL: [[u8; 9]; 512] = {
     let mut table = [[0; 9]; 512];
     let mut bits = 1;
     while bits < table.len() {
         let mut remaining = bits;
         let mut rank = 0;
         while remaining != 0 {
-            table[bits][rank] = remaining.trailing_zeros() as u8;
+            let position = remaining.trailing_zeros() as u8;
+            table[bits][rank] = (position / 3) << 2 | position % 3;
             remaining &= remaining - 1;
             rank += 1;
         }
@@ -42,8 +43,9 @@ const NTH_SET_BIT: [[u8; 9]; 512] = {
 };
 
 #[inline]
-pub(crate) fn nth_set_bit(bits: u16, n: u32) -> u8 {
-    NTH_SET_BIT[bits as usize][n as usize]
+pub(crate) fn nth_empty_cell(bits: u16, n: u32) -> (u8, u8) {
+    let cell = NTH_EMPTY_CELL[bits as usize][n as usize];
+    (cell >> 2, cell & 3)
 }
 
 /// Uniformly samples `[0, upper)` with Lemire's multiply-high method.
