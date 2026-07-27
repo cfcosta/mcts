@@ -120,11 +120,10 @@ impl State for UltimateTicTacToe {
         let was_empty = ((self.board_x[mini_board] | self.board_o[mini_board])
             & (1 << position))
             == 0;
-        if self.current_player == 0 {
-            set_bit(&mut self.board_x, mini_board, position);
-        } else {
-            set_bit(&mut self.board_o, mini_board, position);
-        }
+        let move_mask = 1 << position;
+        let player_mask = 0u16.wrapping_sub(u16::from(self.current_player));
+        self.board_x[mini_board] |= move_mask & !player_mask;
+        self.board_o[mini_board] |= move_mask & player_mask;
         update_macro_board(
             &self.board_x,
             &self.board_o,
@@ -236,10 +235,6 @@ fn determine_legal_actions(
         }
     }
     actions
-}
-
-fn set_bit(board: &mut [u16; 9], mini_board: usize, pos: u8) {
-    board[mini_board] |= 1 << pos;
 }
 
 impl UltimateTicTacToe {
