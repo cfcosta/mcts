@@ -32,7 +32,8 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
     pub fn search(&mut self, n: usize) -> S::Action {
         let current_visits = self.arena.get_node(self.root_id).n;
         let cached_visits = current_visits.saturating_add(n);
-        let mut cache_ready = self.inverse_sqrt.len() > cached_visits;
+        let mut inverse_ready = self.inverse_sqrt.len() > cached_visits;
+        let mut factors_ready = self.sqrt_log.len() > cached_visits;
 
         for _ in 0..n {
             let mut selected_id: usize = self.select();
@@ -40,16 +41,23 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             if !selected_node.state.is_terminal() {
                 self.expand(selected_id);
                 let children: &Vec<usize> = &self.arena.get_node(selected_id).children;
-                if !cache_ready && children.len() > 1 {
-                    let uncached = self.inverse_sqrt.len()..=cached_visits;
-                    self.inverse_sqrt.extend(
-                        uncached
-                            .clone()
-                            .map(|n| 1.0 / (n as f64).sqrt()),
-                    );
-                    self.sqrt_log
-                        .extend(uncached.map(|n| (n as f64).ln().sqrt()));
-                    cache_ready = true;
+                if children.len() > 1 {
+                    if !inverse_ready {
+                        self.inverse_sqrt.extend(
+                            (self.inverse_sqrt.len()..=cached_visits)
+                                .map(|n| 1.0 / (n as f64).sqrt()),
+                        );
+                        inverse_ready = true;
+                    }
+                    // Parent factors are most useful when a long search or a
+                    // very wide scan amortizes their eager construction.
+                    if !factors_ready && (cached_visits >= 4_096 || children.len() >= 256) {
+                        self.sqrt_log.extend(
+                            (self.sqrt_log.len()..=cached_visits)
+                                .map(|n| (n as f64).ln().sqrt()),
+                        );
+                        factors_ready = true;
+                    }
                 }
                 let random_child: usize = children.choose(&mut rand::thread_rng()).unwrap().clone();
                 selected_id = random_child;
@@ -94,7 +102,12 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             return first;
         }
 
-        let exploration = self.c * self.sqrt_log[parent.n];
+        let parent_factor = if parent.n < self.sqrt_log.len() {
+            self.sqrt_log[parent.n]
+        } else {
+            (parent.n as f64).ln().sqrt()
+        };
+        let exploration = self.c * parent_factor;
         let score = |id: usize| {
             let child = self.arena.get_node(id);
             if child.n == 0 {
