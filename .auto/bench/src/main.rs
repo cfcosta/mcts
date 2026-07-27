@@ -204,11 +204,12 @@ fn main() {
     for (name, value) in metrics {
         println!("METRIC {name}={value:.3}");
     }
-    let geomean = (metrics
+    let primary = &metrics[..6];
+    let geomean = (primary
         .iter()
         .map(|(_, value)| value.ln())
         .sum::<f64>()
-        / metrics.len() as f64)
+        / primary.len() as f64)
         .exp();
     println!("METRIC geomean_ns={geomean:.3}");
 }

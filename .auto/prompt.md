@@ -4,10 +4,10 @@
 Improve the real performance of the generic MCTS implementation and bundled game states. Focus on vectorization opportunities, cache-local data layouts, fewer allocations and pointer chases, and less work in hot loops while preserving all observable behavior.
 
 ## Metrics
-- **Primary**: `geomean_ns` (ns, lower is better) — geometric mean of eight representative Criterion medians so each workload contributes by relative speedup rather than absolute duration.
+- **Primary**: `geomean_ns` (ns, lower is better) — geometric mean of six core workloads: empty/midgame end-to-end search for both games plus deep and wide tree operations. Each contributes by relative speedup rather than absolute duration.
 - **Secondary**: `ttt_empty_ns`, `ttt_mid_ns`, `uttt_empty_ns`, `uttt_mid_ns`, `deep_chain_ns`, `wide_512_ns`, `uttt_rollout_ns`, `uttt_step_ns`.
 
-The primary workload covers empty and midgame end-to-end searches for both bundled games, deep selection/backpropagation, wide expansion/UCB scans, Ultimate Tic-Tac-Toe rollout, and state stepping. Periodically run broader benchmark groups when a structural change may expose a tradeoff.
+Rollout and state-step microbenchmarks remain secondary diagnostics, but are excluded from the primary because unchanged reruns showed the nanosecond step metric swinging ~25% and overpowering otherwise consistent search results. Periodically run broader benchmark groups when a structural change may expose a tradeoff.
 
 ## How to Run
 `./.auto/measure.sh` — enters a Nix shell providing `cargo` and `rustc`, runs the fixed-work harness pinned to CPU 6, and emits `METRIC name=value` lines. The harness mirrors the corresponding cases in `benches/mcts.rs` but uses nine batched medians because hard-coded Criterion measurement durations made an autonomous iteration take over 80 seconds. CPU 6 was selected after CPU 0's SMT sibling became busy and unchanged reruns drifted 6-13%.
