@@ -85,7 +85,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let mut current: usize = 0;
         loop {
             let node = &self.arena.get_node(current);
-            if node.is_leaf() || node.state.is_terminal() {
+            if node.is_leaf() {
                 return current;
             }
             current = self.get_best_child(current);
