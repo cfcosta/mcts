@@ -6,13 +6,42 @@ use arena::Arena;
 use node::{Children, Node};
 
 use rand::seq::SliceRandom;
+use std::{collections::HashMap, sync::{Mutex, OnceLock}};
+
+fn shared_lookup_table(
+    tables: &'static OnceLock<Mutex<HashMap<usize, &'static [f64]>>>,
+    required: usize,
+    value: fn(usize) -> f64,
+) -> &'static [f64] {
+    let len = required.saturating_add(1).checked_next_power_of_two().unwrap();
+    let tables = tables.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut tables = tables.lock().unwrap();
+    *tables.entry(len).or_insert_with(|| {
+        let values = (0..len).map(value).collect::<Vec<_>>().into_boxed_slice();
+        Box::leak(values)
+    })
+}
+
+fn inverse_sqrt_table(required: usize) -> &'static [f64] {
+    static TABLES: OnceLock<Mutex<HashMap<usize, &'static [f64]>>> = OnceLock::new();
+    shared_lookup_table(&TABLES, required, |n| {
+        if n == 0 { f64::INFINITY } else { 1.0 / (n as f64).sqrt() }
+    })
+}
+
+fn sqrt_log_table(required: usize) -> &'static [f64] {
+    static TABLES: OnceLock<Mutex<HashMap<usize, &'static [f64]>>> = OnceLock::new();
+    shared_lookup_table(&TABLES, required, |n| {
+        if n == 0 { 0.0 } else { (n as f64).ln().sqrt() }
+    })
+}
 
 pub struct Mcts<S: State> {
     pub arena: Arena<S>,
     pub root_id: usize,
     c: f64,
-    inverse_sqrt: Vec<f64>,
-    sqrt_log: Vec<f64>,
+    inverse_sqrt: &'static [f64],
+    sqrt_log: &'static [f64],
 }
 
 impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
@@ -24,8 +53,8 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             arena,
             root_id,
             c,
-            inverse_sqrt: vec![f64::INFINITY],
-            sqrt_log: vec![0.0],
+            inverse_sqrt: &[f64::INFINITY],
+            sqrt_log: &[0.0],
         }
     }
 
@@ -80,17 +109,13 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
     #[cold]
     #[inline(never)]
     fn extend_inverse_sqrt(&mut self, cached_visits: usize) {
-        self.inverse_sqrt.extend(
-            (self.inverse_sqrt.len()..=cached_visits).map(|n| 1.0 / (n as f64).sqrt()),
-        );
+        self.inverse_sqrt = inverse_sqrt_table(cached_visits);
     }
 
     #[cold]
     #[inline(never)]
     fn extend_sqrt_log(&mut self, cached_visits: usize) {
-        self.sqrt_log.extend(
-            (self.sqrt_log.len()..=cached_visits).map(|n| (n as f64).ln().sqrt()),
-        );
+        self.sqrt_log = sqrt_log_table(cached_visits);
     }
 
     fn select(&mut self) -> usize {
