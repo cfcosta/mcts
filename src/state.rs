@@ -2,6 +2,10 @@ use rand::{seq::SliceRandom, Rng};
 
 pub trait State {
     type Action: Copy;
+
+    /// Whether expansion should clone into arena storage before applying
+    /// `step_in_place`. The default preserves the original `step` path.
+    const IN_PLACE_EXPANSION: bool = false;
     fn default_action() -> Self::Action;
 
     fn player_has_won(&self, player: usize) -> bool;

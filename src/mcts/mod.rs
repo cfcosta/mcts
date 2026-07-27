@@ -166,11 +166,16 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let parent_state: S = parent.state.clone();
         let first_child = self.arena.nodes.len();
         for action in legal_actions {
-            let child = self.arena.add_child(parent_state.clone(), action, id);
-            self.arena
-                .get_node_mut(child)
-                .state
-                .step_in_place(action);
+            if S::IN_PLACE_EXPANSION {
+                let child = self.arena.add_child(parent_state.clone(), action, id);
+                self.arena
+                    .get_node_mut(child)
+                    .state
+                    .step_in_place(action);
+            } else {
+                let state = parent_state.step(action);
+                self.arena.add_child(state, action, id);
+            }
         }
         let end = self.arena.nodes.len();
         self.arena.get_node_mut(id).children = Children::from_range(first_child, end);

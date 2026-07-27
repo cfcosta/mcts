@@ -42,6 +42,7 @@ const WIN_TABLE: [bool; 512] = {
 
 impl State for TicTacToe {
     type Action = (u8, u8);
+    const IN_PLACE_EXPANSION: bool = true;
 
     fn default_action() -> Self::Action {
         (0, 0)

@@ -46,6 +46,7 @@ const WIN_TABLE: [bool; 512] = {
 
 impl State for UltimateTicTacToe {
     type Action = (u8, u8, u8); // Mini-board, Row, Col
+    const IN_PLACE_EXPANSION: bool = true;
 
     fn default_action() -> Self::Action {
         (0, 0, 0)
