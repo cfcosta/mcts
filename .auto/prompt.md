@@ -10,7 +10,7 @@ Improve the real performance of the generic MCTS implementation and bundled game
 The primary workload covers empty and midgame end-to-end searches for both bundled games, deep selection/backpropagation, wide expansion/UCB scans, Ultimate Tic-Tac-Toe rollout, and state stepping. Periodically run broader benchmark groups when a structural change may expose a tradeoff.
 
 ## How to Run
-`./.auto/measure.sh` — enters a Nix shell providing `cargo` and `rustc`, runs the fixed-work harness pinned to CPU 6, and emits `METRIC name=value` lines. The harness mirrors the corresponding cases in `benches/mcts.rs` but uses five batched medians because hard-coded Criterion measurement durations made an autonomous iteration take over 80 seconds. CPU 6 was selected after CPU 0's SMT sibling became busy and unchanged reruns drifted 6-13%.
+`./.auto/measure.sh` — enters a Nix shell providing `cargo` and `rustc`, runs the fixed-work harness pinned to CPU 6, and emits `METRIC name=value` lines. The harness mirrors the corresponding cases in `benches/mcts.rs` but uses nine batched medians because hard-coded Criterion measurement durations made an autonomous iteration take over 80 seconds. CPU 6 was selected after CPU 0's SMT sibling became busy and unchanged reruns drifted 6-13%.
 
 `.auto/checks.sh` runs automatically after each successful measurement and executes the complete test suite with Cargo and Rust from Nix.
 

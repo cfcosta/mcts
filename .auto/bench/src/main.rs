@@ -132,6 +132,7 @@ fn median_ns<F, T>(batch: usize, rounds: usize, mut f: F) -> f64
 where
     F: FnMut() -> T,
 {
+    let rounds = rounds.max(9);
     for _ in 0..(batch / 10).max(1) {
         black_box(f());
     }
