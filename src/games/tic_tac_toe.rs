@@ -158,7 +158,8 @@ impl Default for TicTacToe {
 }
 
 fn determine_legal_actions(board_x: u16, board_o: u16) -> Vec<(u8, u8)> {
-    let mut actions: Vec<(u8, u8)> = Vec::with_capacity(9);
+    let empty = !(board_x | board_o) & 0x1FF;
+    let mut actions: Vec<(u8, u8)> = Vec::with_capacity(bit_count(empty) as usize);
     for pos in 0..9 {
         let mask = 1 << pos;
         if (board_x & mask) == 0 && (board_o & mask) == 0 {
