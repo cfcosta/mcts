@@ -34,6 +34,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let cached_visits = current_visits.saturating_add(n);
         let mut inverse_ready = self.inverse_sqrt.len() > cached_visits;
         let mut factors_ready = self.sqrt_log.len() > cached_visits;
+        let mut rng = rand::thread_rng();
 
         for _ in 0..n {
             let mut selected_id: usize = self.select();
@@ -59,10 +60,10 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
                         factors_ready = true;
                     }
                 }
-                let random_child: usize = children.choose(&mut rand::thread_rng()).unwrap().clone();
+                let random_child: usize = children.choose(&mut rng).unwrap().clone();
                 selected_id = random_child;
             }
-            let reward: f64 = self.simulate(selected_id);
+            let reward: f64 = self.simulate(selected_id, &mut rng);
             self.backprop(selected_id, reward);
         }
         let root_node: &Node<S> = self.arena.get_node(self.root_id);
@@ -162,11 +163,11 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         self.arena.get_node_mut(id).children = Children::from_range(first_child, end);
     }
 
-    fn simulate(&self, id: usize) -> f64 {
+    fn simulate<R: rand::Rng + ?Sized>(&self, id: usize, rng: &mut R) -> f64 {
         let node: &Node<S> = self.arena.get_node(id);
         let mut state: S = node.state.clone();
         while !state.is_terminal() {
-            let action = state.get_random_legal_action();
+            let action = state.get_random_legal_action(rng);
             state.step_in_place(action);
         }
         let reward: f64 = state.reward(node.state.to_play()) as f64;

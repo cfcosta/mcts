@@ -65,9 +65,9 @@ impl State for TicTacToe {
         determine_legal_actions(self.board_x, self.board_o)
     }
 
-    fn get_random_legal_action(&self) -> Self::Action {
+    fn get_random_legal_action<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Self::Action {
         let empty = !(self.board_x | self.board_o) & 0x1FF;
-        let rank = random_below(bit_count(empty));
+        let rank = random_below(rng, bit_count(empty));
         let pos = nth_set_bit(empty, rank);
         (pos / 3, pos % 3)
     }

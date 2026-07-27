@@ -73,13 +73,13 @@ impl State for UltimateTicTacToe {
         )
     }
 
-    fn get_random_legal_action(&self) -> Self::Action {
+    fn get_random_legal_action<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Self::Action {
         if self.next_board < 9 {
             let board = self.next_board as usize;
             let board_mask = 1 << board;
             let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
             if ((self.macro_board_x | self.macro_board_o) & board_mask) == 0 && empty != 0 {
-                let target = random_below(bit_count(empty));
+                let target = random_below(rng, bit_count(empty));
                 let pos = nth_set_bit(empty, target);
                 return (board as u8, pos / 3, pos % 3);
             }
@@ -91,7 +91,7 @@ impl State for UltimateTicTacToe {
             .zip(&self.board_o)
             .map(|(&x, &o)| bit_count(!(x | o) & 0x1FF))
             .sum();
-        let mut target = random_below(empty_count);
+        let mut target = random_below(rng, empty_count);
         for board in 0..9 {
             let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
             empty_count = bit_count(empty);

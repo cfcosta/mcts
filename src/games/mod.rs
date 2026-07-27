@@ -49,11 +49,8 @@ pub(crate) fn nth_set_bit(bits: u16, n: u32) -> u8 {
 /// Uniformly samples `[0, upper)` with Lemire's multiply-high method.
 /// Bundled games use this small concrete helper instead of monomorphizing the
 /// much larger generic `gen_range` machinery into each rollout selector.
-pub(crate) fn random_below(upper: u32) -> u32 {
-    use rand::RngCore;
-
+pub(crate) fn random_below<R: rand::RngCore + ?Sized>(rng: &mut R, upper: u32) -> u32 {
     debug_assert!(upper > 0);
-    let mut rng = rand::thread_rng();
     loop {
         let product = u64::from(rng.next_u32()) * u64::from(upper);
         let low = product as u32;

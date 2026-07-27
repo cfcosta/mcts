@@ -1,4 +1,4 @@
-use rand::seq::SliceRandom;
+use rand::{seq::SliceRandom, Rng};
 
 pub trait State {
     type Action: Copy;
@@ -12,10 +12,10 @@ pub trait State {
     ///
     /// State implementations may override this to avoid allocating the action
     /// vector during a rollout.
-    fn get_random_legal_action(&self) -> Self::Action {
+    fn get_random_legal_action<R: Rng + ?Sized>(&self, rng: &mut R) -> Self::Action {
         *self
             .get_legal_actions()
-            .choose(&mut rand::thread_rng())
+            .choose(rng)
             .expect("no legal actions in a non-terminal state")
     }
 
