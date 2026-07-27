@@ -23,6 +23,23 @@ const WIN_PATTERNS: [u16; 8] = [
     0b001010100,
 ];
 
+const WIN_TABLE: [bool; 512] = {
+    let mut table = [false; 512];
+    let mut board = 0;
+    while board < table.len() {
+        let mut pattern = 0;
+        while pattern < WIN_PATTERNS.len() {
+            if (board as u16 & WIN_PATTERNS[pattern]) == WIN_PATTERNS[pattern] {
+                table[board] = true;
+                break;
+            }
+            pattern += 1;
+        }
+        board += 1;
+    }
+    table
+};
+
 impl State for TicTacToe {
     type Action = (u8, u8);
 
@@ -35,12 +52,7 @@ impl State for TicTacToe {
             0_usize => self.board_x,
             _ => self.board_o,
         };
-        for &pattern in WIN_PATTERNS.iter() {
-            if (board & pattern) == pattern {
-                return true;
-            }
-        }
-        false
+        WIN_TABLE[board as usize]
     }
 
     fn is_terminal(&self) -> bool {
