@@ -67,7 +67,8 @@ The repository ships with a behavioral test suite (`cargo test`) and a
 Criterion benchmark suite (`cargo bench`) intended to make performance work
 safe: the tests pin the observable behavior of the search, and the benchmarks
 isolate each hot path. See [BENCHMARKING.md](BENCHMARKING.md) for the
-workflow.
+workflow, and [CACHE_ANALYSIS.md](CACHE_ANALYSIS.md) for a measured
+analysis of the search's cache behavior.
 
 ## Implementation Details
 
