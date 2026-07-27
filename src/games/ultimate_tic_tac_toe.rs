@@ -27,6 +27,23 @@ const WIN_PATTERNS: [u16; 8] = [
     0b001010100,
 ];
 
+const WIN_TABLE: [bool; 512] = {
+    let mut table = [false; 512];
+    let mut board = 0;
+    while board < table.len() {
+        let mut pattern = 0;
+        while pattern < WIN_PATTERNS.len() {
+            if (board as u16 & WIN_PATTERNS[pattern]) == WIN_PATTERNS[pattern] {
+                table[board] = true;
+                break;
+            }
+            pattern += 1;
+        }
+        board += 1;
+    }
+    table
+};
+
 impl State for UltimateTicTacToe {
     type Action = (u8, u8, u8); // Mini-board, Row, Col
 
@@ -39,12 +56,7 @@ impl State for UltimateTicTacToe {
             0_usize => self.macro_board_x,
             _ => self.macro_board_o,
         };
-        for &pattern in WIN_PATTERNS.iter() {
-            if (board & pattern) == pattern {
-                return true;
-            }
-        }
-        false
+        WIN_TABLE[board as usize]
     }
 
     fn is_terminal(&self) -> bool {
@@ -198,14 +210,10 @@ fn update_macro_board(
     let mini_board_x = board_x[board_to_check];
     let mini_board_o = board_o[board_to_check];
 
-    for &pattern in WIN_PATTERNS.iter() {
-        if (mini_board_x & pattern) == pattern {
-            *macro_board_x |= 1 << board_to_check;
-            return;
-        } else if (mini_board_o & pattern) == pattern {
-            *macro_board_o |= 1 << board_to_check;
-            return;
-        }
+    if WIN_TABLE[mini_board_x as usize] {
+        *macro_board_x |= 1 << board_to_check;
+    } else if WIN_TABLE[mini_board_o as usize] {
+        *macro_board_o |= 1 << board_to_check;
     }
 }
 
