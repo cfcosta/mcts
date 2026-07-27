@@ -43,6 +43,12 @@ pub trait State {
         self.step_in_place(action);
     }
 
+    /// Returns the reward when this state is terminal, or `None` otherwise.
+    #[inline]
+    fn terminal_reward(&self, to_play: usize) -> Option<f32> {
+        self.is_terminal().then(|| self.reward(to_play))
+    }
+
     fn reward(&self, to_play: usize) -> f32;
     fn render(&self);
 }

@@ -151,6 +151,18 @@ impl State for UltimateTicTacToe {
         self.occupied += 1;
     }
 
+    fn terminal_reward(&self, to_play: usize) -> Option<f32> {
+        if self.player_has_won(to_play) {
+            Some(-1.0)
+        } else if self.player_has_won(1 - to_play) {
+            Some(1.0)
+        } else if self.occupied == 81 {
+            Some(0.0)
+        } else {
+            None
+        }
+    }
+
     fn reward(&self, to_play: usize) -> f32 {
         if self.player_has_won(to_play) {
             -1.0

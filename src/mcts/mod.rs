@@ -177,12 +177,14 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
     fn simulate<R: rand::Rng + ?Sized>(&self, id: usize, rng: &mut R) -> f64 {
         let node: &Node<S> = self.arena.get_node(id);
         let mut state: S = node.state.clone();
-        while !state.is_terminal() {
+        let to_play = node.state.to_play();
+        loop {
+            if let Some(reward) = state.terminal_reward(to_play) {
+                return reward as f64;
+            }
             let action = state.get_random_legal_action(rng);
             state.step_legal_in_place(action);
         }
-        let reward: f64 = state.reward(node.state.to_play()) as f64;
-        reward
     }
 
     fn backprop(&mut self, id: usize, mut reward: f64) {
