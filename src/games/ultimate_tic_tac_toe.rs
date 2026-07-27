@@ -44,6 +44,22 @@ const WIN_TABLE: [bool; 512] = {
     table
 };
 
+const NTH_SET_BIT: [[u8; 9]; 512] = {
+    let mut table = [[0; 9]; 512];
+    let mut bits = 1;
+    while bits < table.len() {
+        let mut remaining = bits;
+        let mut rank = 0;
+        while remaining != 0 {
+            table[bits][rank] = remaining.trailing_zeros() as u8;
+            remaining &= remaining - 1;
+            rank += 1;
+        }
+        bits += 1;
+    }
+    table
+};
+
 impl State for UltimateTicTacToe {
     type Action = (u8, u8, u8); // Mini-board, Row, Col
 
@@ -239,12 +255,8 @@ fn determine_legal_actions(
 }
 
 #[inline]
-fn nth_set_bit(mut bits: u16, mut n: u32) -> u8 {
-    while n != 0 {
-        bits &= bits - 1;
-        n -= 1;
-    }
-    bits.trailing_zeros() as u8
+fn nth_set_bit(bits: u16, n: u32) -> u8 {
+    NTH_SET_BIT[bits as usize][n as usize]
 }
 
 fn set_bit(board: &mut [u16; 9], mini_board: usize, pos: u8) {
