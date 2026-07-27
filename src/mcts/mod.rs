@@ -29,7 +29,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
 
     pub fn search(&mut self, n: usize) -> S::Action {
         let current_visits = self.arena.get_node(self.root_id).n;
-        let cached_visits = current_visits.saturating_add(n).min(16_384);
+        let cached_visits = current_visits.saturating_add(n);
         self.inverse_sqrt
             .extend((self.inverse_sqrt.len()..=cached_visits).map(|n| 1.0 / (n as f64).sqrt()));
 
@@ -87,10 +87,8 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             let child = self.arena.get_node(id);
             if child.n == 0 {
                 f64::INFINITY
-            } else if child.n < self.inverse_sqrt.len() {
-                child.q + exploration * self.inverse_sqrt[child.n]
             } else {
-                child.q + exploration / (child.n as f64).sqrt()
+                child.q + exploration * self.inverse_sqrt[child.n]
             }
         };
         let mut best_child = first;
