@@ -1,13 +1,15 @@
 use crate::state::State;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct UltimateTicTacToe {
     board_x: [u16; 9],
     board_o: [u16; 9],
     macro_board_x: u16,
     macro_board_o: u16,
-    current_player: usize,
-    legal_actions: Vec<(u8, u8, u8)>,
+    current_player: u8,
+    // The mini-board selected by the previous move, or 9 for the initial state.
+    next_board: u8,
+    occupied: u8,
 }
 
 const WIN_PATTERNS: [u16; 8] = [
@@ -45,57 +47,53 @@ impl State for UltimateTicTacToe {
     }
 
     fn is_terminal(&self) -> bool {
-        self.legal_actions.is_empty() || self.player_has_won(0) || self.player_has_won(1)
+        self.occupied == 81 || self.player_has_won(0) || self.player_has_won(1)
     }
 
     fn get_legal_actions(&self) -> Vec<Self::Action> {
-        self.legal_actions.clone()
+        determine_legal_actions(
+            &self.board_x,
+            &self.board_o,
+            self.macro_board_x,
+            self.macro_board_o,
+            self.next_board,
+        )
     }
 
     fn to_play(&self) -> usize {
-        self.current_player
+        self.current_player as usize
     }
 
     fn step(&self, action: Self::Action) -> Self {
         let mut board_x_clone = self.board_x;
         let mut board_o_clone = self.board_o;
+        let mini_board = action.0 as usize;
+        let position = action.1 * 3 + action.2;
+        let was_empty = ((board_x_clone[mini_board] | board_o_clone[mini_board])
+            & (1 << position))
+            == 0;
         if self.current_player == 0 {
-            set_bit(
-                &mut board_x_clone,
-                action.0 as usize,
-                action.1 * 3 + action.2,
-            );
+            set_bit(&mut board_x_clone, mini_board, position);
         } else {
-            set_bit(
-                &mut board_o_clone,
-                action.0 as usize,
-                action.1 * 3 + action.2,
-            );
+            set_bit(&mut board_o_clone, mini_board, position);
         }
         let mut macro_board_clone_x = self.macro_board_x;
         let mut macro_board_clone_o = self.macro_board_o;
         update_macro_board(
-            board_x_clone,
-            board_o_clone,
+            &board_x_clone,
+            &board_o_clone,
             &mut macro_board_clone_x,
             &mut macro_board_clone_o,
-            action.0 as usize,
-        );
-        let current_player = 1 - self.current_player;
-        let legal_actions = determine_legal_actions(
-            board_x_clone,
-            board_o_clone,
-            macro_board_clone_x,
-            macro_board_clone_o,
-            (action.1 * 3 + action.2) as usize,
+            mini_board,
         );
         UltimateTicTacToe {
             board_x: board_x_clone,
             board_o: board_o_clone,
             macro_board_x: macro_board_clone_x,
             macro_board_o: macro_board_clone_o,
-            current_player,
-            legal_actions,
+            current_player: 1 - self.current_player,
+            next_board: position,
+            occupied: self.occupied + u8::from(was_empty),
         }
     }
 
@@ -148,8 +146,8 @@ impl State for UltimateTicTacToe {
 }
 
 fn update_macro_board(
-    board_x: [u16; 9],
-    board_o: [u16; 9],
+    board_x: &[u16; 9],
+    board_o: &[u16; 9],
     macro_board_x: &mut u16,
     macro_board_o: &mut u16,
     board_to_check: usize,
@@ -169,30 +167,35 @@ fn update_macro_board(
 }
 
 fn determine_legal_actions(
-    board_x: [u16; 9],
-    board_o: [u16; 9],
+    board_x: &[u16; 9],
+    board_o: &[u16; 9],
     macro_board_x: u16,
     macro_board_o: u16,
-    next_board: usize,
+    next_board: u8,
 ) -> Vec<(u8, u8, u8)> {
-    let mut actions: Vec<(u8, u8, u8)> = Vec::with_capacity(81);
-    let pos = 1 << next_board;
-    if ((macro_board_x & pos) == 0 && (macro_board_o & pos) == 0)
-        && ((board_x[next_board] | board_o[next_board]) != 0x1FF)
-    {
-        for pos in 0..9 {
-            let mask = 1 << pos;
-            if (board_x[next_board] & mask) == 0 && (board_o[next_board] & mask) == 0 {
-                actions.push((next_board as u8, pos / 3, pos % 3));
-            }
-        }
-    } else {
-        for i in 0..9 {
+    if next_board < 9 {
+        let next_board = next_board as usize;
+        let board_mask = 1 << next_board;
+        if ((macro_board_x | macro_board_o) & board_mask) == 0
+            && (board_x[next_board] | board_o[next_board]) != 0x1FF
+        {
+            let mut actions = Vec::with_capacity(9);
+            let occupied = board_x[next_board] | board_o[next_board];
             for pos in 0..9 {
-                let mask = 1 << pos;
-                if (board_x[i] & mask) == 0 && (board_o[i] & mask) == 0 {
-                    actions.push((i as u8, pos / 3, pos % 3));
+                if occupied & (1 << pos) == 0 {
+                    actions.push((next_board as u8, pos / 3, pos % 3));
                 }
+            }
+            return actions;
+        }
+    }
+
+    let mut actions = Vec::with_capacity(81);
+    for i in 0..9 {
+        let occupied = board_x[i] | board_o[i];
+        for pos in 0..9 {
+            if occupied & (1 << pos) == 0 {
+                actions.push((i as u8, pos / 3, pos % 3));
             }
         }
     }
@@ -205,21 +208,14 @@ fn set_bit(board: &mut [u16; 9], mini_board: usize, pos: u8) {
 
 impl UltimateTicTacToe {
     pub fn new() -> UltimateTicTacToe {
-        let mut legal_actions: Vec<(u8, u8, u8)> = Vec::with_capacity(81);
-        for i in 0..9 {
-            for j in 0..3 {
-                for k in 0..3 {
-                    legal_actions.push((i, j, k));
-                }
-            }
-        }
         UltimateTicTacToe {
             board_x: [0; 9],
             board_o: [0; 9],
             macro_board_x: 0,
             macro_board_o: 0,
             current_player: 0,
-            legal_actions,
+            next_board: 9,
+            occupied: 0,
         }
     }
 }
