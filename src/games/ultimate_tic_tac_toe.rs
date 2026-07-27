@@ -98,16 +98,10 @@ impl State for UltimateTicTacToe {
             }
         }
 
-        let mut empty_count: u32 = self
-            .board_x
-            .iter()
-            .zip(&self.board_o)
-            .map(|(&x, &o)| bit_count(!(x | o) & 0x1FF))
-            .sum();
-        let mut target = random_below(rng, empty_count);
+        let mut target = random_below(rng, 81 - u32::from(self.occupied));
         for board in 0..9 {
             let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
-            empty_count = bit_count(empty);
+            let empty_count = bit_count(empty);
             if target < empty_count {
                 let pos = nth_set_bit(empty, target);
                 let (row, col) = POSITION_COORDS[pos as usize];
