@@ -168,7 +168,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let mut state: S = node.state.clone();
         while !state.is_terminal() {
             let action = state.get_random_legal_action(rng);
-            state.step_in_place(action);
+            state.step_legal_in_place(action);
         }
         let reward: f64 = state.reward(node.state.to_play()) as f64;
         reward

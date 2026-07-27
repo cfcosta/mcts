@@ -136,6 +136,25 @@ impl State for UltimateTicTacToe {
         self.occupied += u8::from(was_empty);
     }
 
+    fn step_legal_in_place(&mut self, action: Self::Action) {
+        let mini_board = action.0 as usize;
+        let position = action.1 * 3 + action.2;
+        let move_mask = 1 << position;
+        let player_mask = 0u16.wrapping_sub(u16::from(self.current_player));
+        self.board_x[mini_board] |= move_mask & !player_mask;
+        self.board_o[mini_board] |= move_mask & player_mask;
+        update_macro_board(
+            &self.board_x,
+            &self.board_o,
+            &mut self.macro_board_x,
+            &mut self.macro_board_o,
+            mini_board,
+        );
+        self.current_player = 1 - self.current_player;
+        self.next_board = position;
+        self.occupied += 1;
+    }
+
     fn reward(&self, to_play: usize) -> f32 {
         if self.player_has_won(to_play) {
             -1.0

@@ -34,6 +34,15 @@ pub trait State {
         *self = self.step(action);
     }
 
+    /// Applies an action known to come from this state's legal-action set.
+    #[inline]
+    fn step_legal_in_place(&mut self, action: Self::Action)
+    where
+        Self: Sized,
+    {
+        self.step_in_place(action);
+    }
+
     fn reward(&self, to_play: usize) -> f32;
     fn render(&self);
 }
