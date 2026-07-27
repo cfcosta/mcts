@@ -77,40 +77,29 @@ impl State for UltimateTicTacToe {
         if self.next_board < 9 {
             let board = self.next_board as usize;
             let board_mask = 1 << board;
-            let occupied = self.board_x[board] | self.board_o[board];
-            if ((self.macro_board_x | self.macro_board_o) & board_mask) == 0
-                && occupied != 0x1FF
-            {
-                let empty = 9 - occupied.count_ones();
-                let mut target = rand::thread_rng().gen_range(0..empty);
-                for pos in 0u8..9 {
-                    if occupied & (1 << pos) == 0 {
-                        if target == 0 {
-                            return (board as u8, pos / 3, pos % 3);
-                        }
-                        target -= 1;
-                    }
-                }
+            let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
+            if ((self.macro_board_x | self.macro_board_o) & board_mask) == 0 && empty != 0 {
+                let target = rand::thread_rng().gen_range(0..empty.count_ones());
+                let pos = nth_set_bit(empty, target);
+                return (board as u8, pos / 3, pos % 3);
             }
         }
 
-        let empty: u32 = self
+        let mut empty_count: u32 = self
             .board_x
             .iter()
             .zip(&self.board_o)
-            .map(|(&x, &o)| 9 - (x | o).count_ones())
+            .map(|(&x, &o)| (!(x | o) & 0x1FF).count_ones())
             .sum();
-        let mut target = rand::thread_rng().gen_range(0..empty);
+        let mut target = rand::thread_rng().gen_range(0..empty_count);
         for board in 0..9 {
-            let occupied = self.board_x[board] | self.board_o[board];
-            for pos in 0u8..9 {
-                if occupied & (1 << pos) == 0 {
-                    if target == 0 {
-                        return (board as u8, pos / 3, pos % 3);
-                    }
-                    target -= 1;
-                }
+            let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
+            empty_count = empty.count_ones();
+            if target < empty_count {
+                let pos = nth_set_bit(empty, target);
+                return (board as u8, pos / 3, pos % 3);
             }
+            target -= empty_count;
         }
         unreachable!("non-terminal Ultimate Tic-Tac-Toe state has no legal action")
     }
@@ -251,6 +240,15 @@ fn determine_legal_actions(
         }
     }
     actions
+}
+
+#[inline]
+fn nth_set_bit(mut bits: u16, mut n: u32) -> u8 {
+    while n != 0 {
+        bits &= bits - 1;
+        n -= 1;
+    }
+    bits.trailing_zeros() as u8
 }
 
 fn set_bit(board: &mut [u16; 9], mini_board: usize, pos: u8) {
