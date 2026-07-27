@@ -61,6 +61,14 @@ cd mcts-rs
 cargo run --example tic_tac_toe
 ```
 
+### Testing and Benchmarking
+
+The repository ships with a behavioral test suite (`cargo test`) and a
+Criterion benchmark suite (`cargo bench`) intended to make performance work
+safe: the tests pin the observable behavior of the search, and the benchmarks
+isolate each hot path. See [BENCHMARKING.md](BENCHMARKING.md) for the
+workflow.
+
 ## Implementation Details
 
 ### Arena Allocator
