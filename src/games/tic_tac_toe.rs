@@ -85,19 +85,18 @@ impl State for TicTacToe {
     }
 
     fn step(&self, action: Self::Action) -> Self {
-        let mut new_board_x = self.board_x;
-        let mut new_board_o = self.board_o;
+        let mut next = *self;
+        next.step_in_place(action);
+        next
+    }
+
+    fn step_in_place(&mut self, action: Self::Action) {
         if self.current_player == 0 {
-            set_bit(&mut new_board_x, action.0 * 3 + action.1);
+            set_bit(&mut self.board_x, action.0 * 3 + action.1);
         } else {
-            set_bit(&mut new_board_o, action.0 * 3 + action.1);
+            set_bit(&mut self.board_o, action.0 * 3 + action.1);
         }
-        let current_player = 1 - self.current_player;
-        TicTacToe {
-            board_x: new_board_x,
-            board_o: new_board_o,
-            current_player,
-        }
+        self.current_player = 1 - self.current_player;
     }
 
     fn reward(&self, to_play: usize) -> f32 {

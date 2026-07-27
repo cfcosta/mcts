@@ -21,6 +21,18 @@ pub trait State {
 
     fn to_play(&self) -> usize;
     fn step(&self, action: Self::Action) -> Self;
+
+    /// Applies an action to reusable state storage.
+    ///
+    /// The default preserves compatibility for existing states. Implementors
+    /// can override it to avoid copying a full state on every rollout ply.
+    fn step_in_place(&mut self, action: Self::Action)
+    where
+        Self: Sized,
+    {
+        *self = self.step(action);
+    }
+
     fn reward(&self, to_play: usize) -> f32;
     fn render(&self);
 }

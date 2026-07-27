@@ -109,36 +109,32 @@ impl State for UltimateTicTacToe {
     }
 
     fn step(&self, action: Self::Action) -> Self {
-        let mut board_x_clone = self.board_x;
-        let mut board_o_clone = self.board_o;
+        let mut next = *self;
+        next.step_in_place(action);
+        next
+    }
+
+    fn step_in_place(&mut self, action: Self::Action) {
         let mini_board = action.0 as usize;
         let position = action.1 * 3 + action.2;
-        let was_empty = ((board_x_clone[mini_board] | board_o_clone[mini_board])
+        let was_empty = ((self.board_x[mini_board] | self.board_o[mini_board])
             & (1 << position))
             == 0;
         if self.current_player == 0 {
-            set_bit(&mut board_x_clone, mini_board, position);
+            set_bit(&mut self.board_x, mini_board, position);
         } else {
-            set_bit(&mut board_o_clone, mini_board, position);
+            set_bit(&mut self.board_o, mini_board, position);
         }
-        let mut macro_board_clone_x = self.macro_board_x;
-        let mut macro_board_clone_o = self.macro_board_o;
         update_macro_board(
-            &board_x_clone,
-            &board_o_clone,
-            &mut macro_board_clone_x,
-            &mut macro_board_clone_o,
+            &self.board_x,
+            &self.board_o,
+            &mut self.macro_board_x,
+            &mut self.macro_board_o,
             mini_board,
         );
-        UltimateTicTacToe {
-            board_x: board_x_clone,
-            board_o: board_o_clone,
-            macro_board_x: macro_board_clone_x,
-            macro_board_o: macro_board_clone_o,
-            current_player: 1 - self.current_player,
-            next_board: position,
-            occupied: self.occupied + u8::from(was_empty),
-        }
+        self.current_player = 1 - self.current_player;
+        self.next_board = position;
+        self.occupied += u8::from(was_empty);
     }
 
     fn reward(&self, to_play: usize) -> f32 {
