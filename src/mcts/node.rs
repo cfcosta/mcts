@@ -1,18 +1,61 @@
-use std::ops::Deref;
+use std::{fmt, ops::Deref, ptr};
 
 use crate::mcts::arena::Arena;
 use crate::state::State;
 
-#[derive(Debug, Default)]
-pub struct Children(Box<[usize]>);
+/// An immutable child list with its single-child case stored inline.
+///
+/// `len <= 1` means `data` stores the child ID directly (or is unused for an
+/// empty list). For larger lists, `data` is the thin data pointer of a boxed
+/// slice whose length is stored in `len`.
+pub struct Children {
+    data: usize,
+    len: usize,
+}
 
 impl Children {
     pub fn as_slice(&self) -> &[usize] {
-        &self.0
+        if self.len <= 1 {
+            // `data` is an initialized, aligned usize field owned by `self`.
+            unsafe { std::slice::from_raw_parts(&self.data, self.len) }
+        } else {
+            // Invariant: `from_range` stores a live boxed-slice data pointer
+            // whenever len > 1, and Children is immutable thereafter.
+            unsafe { std::slice::from_raw_parts(self.data as *const usize, self.len) }
+        }
     }
 
     pub(crate) fn from_range(first: usize, end: usize) -> Self {
-        Self((first..end).collect::<Vec<_>>().into_boxed_slice())
+        let len = end - first;
+        if len <= 1 {
+            return Self { data: first, len };
+        }
+
+        let boxed = (first..end).collect::<Vec<_>>().into_boxed_slice();
+        let data = Box::into_raw(boxed) as *mut usize as usize;
+        Self { data, len }
+    }
+}
+
+impl Default for Children {
+    fn default() -> Self {
+        Self { data: 0, len: 0 }
+    }
+}
+
+impl Drop for Children {
+    fn drop(&mut self) {
+        if self.len > 1 {
+            // Rebuild the exact fat pointer produced by Box::into_raw.
+            let slice = ptr::slice_from_raw_parts_mut(self.data as *mut usize, self.len);
+            unsafe { drop(Box::from_raw(slice)) };
+        }
+    }
+}
+
+impl fmt::Debug for Children {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
@@ -20,7 +63,7 @@ impl Deref for Children {
     type Target = [usize];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.as_slice()
     }
 }
 
