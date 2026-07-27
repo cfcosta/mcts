@@ -42,4 +42,10 @@ The primary workload covers empty and midgame end-to-end searches for both bundl
 
 ## What's Been Tried
 - Established the original eight-workload Criterion baseline, then replaced only the timing harness because hard-coded group durations made each loop take ~82 seconds. The fixed-work harness retains the same positions, iteration counts, tree shapes, rollout, and step workloads.
-- No production optimization experiments yet. `CACHE_ANALYSIS.md` identifies state-owned legal-action vectors, fat AoS nodes, per-node child vectors, repeated UCB math, arena growth, and rollout allocations as major opportunities.
+- **Kept:** direct one-pass UCB scoring with a single-child fast path. This removed repeated `max_by` score evaluation and hoisted parent `ln`, improving the aggregate ~32% and wide-512 ~71%.
+- **Kept:** removed cached legal-action `Vec`s from both bundled states. TTT is now a 6-byte `Copy` state and UTTT a 44-byte `Copy` state; UTTT stores only next-board/occupied metadata. This removed state clone/step allocation and retained capacity-81 buffers.
+- **Kept:** optional allocation-free uniformly random action selection for rollouts. UTTT uses board popcounts plus nth-set-bit selection; this was confirmed twice and improved UTTT searches ~22-23% after earlier direct empty-cell selection had already removed rollout vectors.
+- **Kept:** 512-byte compile-time win lookup tables for both games and empty-bit iteration for UTTT legal-action generation.
+- **Rejected:** reusing one ThreadRng handle, exact child `Vec` reserve, arena reserve-by-iterations, reusable expansion action buffer, scalar UCB algebra, direct contiguous-child slicing, final-q one-pass scan, and TTT set-bit action iteration. None improved the primary metric reliably.
+- **Rejected architectural prototype:** a compact hot-node sidecar improved the 512-deep chain ~9% but regressed empty TTT ~10%, duplicated public stats, and made public fields stale until synchronization. A true breaking hot/cold redesign remains promising.
+- Current fixed-work best is `geomean_ns=205184.905`, 52.9% below the fixed-work baseline.

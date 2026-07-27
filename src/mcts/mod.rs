@@ -11,6 +11,7 @@ pub struct Mcts<S: State> {
     pub arena: Arena<S>,
     pub root_id: usize,
     c: f64,
+    inverse_sqrt: Vec<f64>,
 }
 
 impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
@@ -18,10 +19,20 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let mut arena: Arena<S> = Arena::new();
         let root: Node<S> = Node::new(state.clone(), S::default_action(), None);
         let root_id: usize = arena.add_node(root);
-        Mcts { arena, root_id, c }
+        Mcts {
+            arena,
+            root_id,
+            c,
+            inverse_sqrt: vec![f64::INFINITY],
+        }
     }
 
     pub fn search(&mut self, n: usize) -> S::Action {
+        let current_visits = self.arena.get_node(self.root_id).n;
+        let cached_visits = current_visits.saturating_add(n).min(16_384);
+        self.inverse_sqrt
+            .extend((self.inverse_sqrt.len()..=cached_visits).map(|n| 1.0 / (n as f64).sqrt()));
+
         for _ in 0..n {
             let mut selected_id: usize = self.select();
             let selected_node: &Node<S> = self.arena.get_node(selected_id);
@@ -57,9 +68,41 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             if node.is_leaf() || node.state.is_terminal() {
                 return current;
             }
-            let best_child = node.get_best_child(&self.arena, self.c);
-            current = best_child;
+            current = self.get_best_child(current);
         }
+    }
+
+    fn get_best_child(&self, parent_id: usize) -> usize {
+        let parent = self.arena.get_node(parent_id);
+        let (&first, rest) = parent
+            .children
+            .split_first()
+            .expect("get_best_child called on leaf node");
+        if rest.is_empty() {
+            return first;
+        }
+
+        let exploration = self.c * (parent.n as f64).ln().sqrt();
+        let score = |id: usize| {
+            let child = self.arena.get_node(id);
+            if child.n == 0 {
+                f64::INFINITY
+            } else if child.n < self.inverse_sqrt.len() {
+                child.q + exploration * self.inverse_sqrt[child.n]
+            } else {
+                child.q + exploration / (child.n as f64).sqrt()
+            }
+        };
+        let mut best_child = first;
+        let mut best_score = score(first);
+        for &child in rest {
+            let child_score = score(child);
+            if child_score.partial_cmp(&best_score).unwrap().is_ge() {
+                best_child = child;
+                best_score = child_score;
+            }
+        }
+        best_child
     }
 
     fn expand(&mut self, id: usize) {
