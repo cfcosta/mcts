@@ -1,13 +1,11 @@
 use crate::state::State;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TicTacToe {
     board_x: u16,
     board_o: u16,
     // Current player: 0 => X, 1 => O
-    current_player: usize,
-    // Row, col
-    legal_actions: Vec<(u8, u8)>,
+    current_player: u8,
 }
 
 const WIN_PATTERNS: [u16; 8] = [
@@ -51,11 +49,11 @@ impl State for TicTacToe {
     }
 
     fn get_legal_actions(&self) -> Vec<Self::Action> {
-        self.legal_actions.clone()
+        determine_legal_actions(self.board_x, self.board_o)
     }
 
     fn to_play(&self) -> usize {
-        self.current_player
+        self.current_player as usize
     }
 
     fn step(&self, action: Self::Action) -> Self {
@@ -67,12 +65,10 @@ impl State for TicTacToe {
             set_bit(&mut new_board_o, action.0 * 3 + action.1);
         }
         let current_player = 1 - self.current_player;
-        let legal_actions = determine_legal_actions(new_board_x, new_board_o);
         TicTacToe {
             board_x: new_board_x,
             board_o: new_board_o,
             current_player,
-            legal_actions,
         }
     }
 
@@ -116,17 +112,10 @@ impl State for TicTacToe {
 
 impl TicTacToe {
     pub fn new() -> TicTacToe {
-        let mut legal_actions: Vec<(u8, u8)> = Vec::with_capacity(9);
-        for i in 0..3 {
-            for j in 0..3 {
-                legal_actions.push((i, j));
-            }
-        }
         TicTacToe {
             board_x: 0,
             board_o: 0,
             current_player: 0,
-            legal_actions,
         }
     }
 }
