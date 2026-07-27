@@ -146,6 +146,13 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             "expanded children must remain contiguous"
         );
         let child_nodes = &self.arena.nodes[first..first + parent.children.len()];
+        if child_nodes[0].n == 0 {
+            let offset = child_nodes
+                .iter()
+                .rposition(|child| child.n == 0)
+                .unwrap();
+            return first + offset;
+        }
         let parent_factor = if parent.n < self.sqrt_log.len() {
             self.sqrt_log[parent.n]
         } else {
