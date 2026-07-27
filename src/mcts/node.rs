@@ -38,18 +38,33 @@ impl<S: State> Node<S> {
     }
 
     pub fn get_best_child(&self, arena: &Arena<S>, c: f64) -> usize {
-        if self.is_leaf() {
-            panic!("get_best_child called on leaf node");
-        }
-        let best_child = self
+        let (&first, rest) = self
             .children
-            .iter()
-            .max_by(|&a, &b| {
-                let ucb_a = arena.get_node(*a).ucb(arena, c);
-                let ucb_b = arena.get_node(*b).ucb(arena, c);
-                ucb_a.partial_cmp(&ucb_b).unwrap()
-            })
-            .unwrap();
-        *best_child
+            .split_first()
+            .expect("get_best_child called on leaf node");
+        if rest.is_empty() {
+            return first;
+        }
+
+        let parent_log = (self.n as f64).ln();
+        let score = |id| {
+            let child = arena.get_node(id);
+            if child.n == 0 {
+                f64::INFINITY
+            } else {
+                child.q + c * (parent_log / child.n as f64).sqrt()
+            }
+        };
+        let mut best_child = first;
+        let mut best_score = score(first);
+        for &child in rest {
+            let child_score = score(child);
+            // Iterator::max_by returns the last element when scores tie.
+            if child_score.partial_cmp(&best_score).unwrap().is_ge() {
+                best_child = child;
+                best_score = child_score;
+            }
+        }
+        best_child
     }
 }
