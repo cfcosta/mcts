@@ -26,6 +26,7 @@ pub trait State {
     ///
     /// The default preserves compatibility for existing states. Implementors
     /// can override it to avoid copying a full state on every rollout ply.
+    #[inline]
     fn step_in_place(&mut self, action: Self::Action)
     where
         Self: Sized,
