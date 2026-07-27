@@ -1,5 +1,5 @@
+use crate::games::random_below;
 use crate::state::State;
-use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TicTacToe {
@@ -68,7 +68,7 @@ impl State for TicTacToe {
     fn get_random_legal_action(&self) -> Self::Action {
         let occupied = self.board_x | self.board_o;
         let empty = 9 - occupied.count_ones();
-        let mut target = rand::thread_rng().gen_range(0..empty);
+        let mut target = random_below(empty);
         for pos in 0u8..9 {
             if occupied & (1 << pos) == 0 {
                 if target == 0 {

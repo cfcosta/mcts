@@ -1,5 +1,5 @@
+use crate::games::random_below;
 use crate::state::State;
-use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 pub struct UltimateTicTacToe {
@@ -79,7 +79,7 @@ impl State for UltimateTicTacToe {
             let board_mask = 1 << board;
             let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
             if ((self.macro_board_x | self.macro_board_o) & board_mask) == 0 && empty != 0 {
-                let target = rand::thread_rng().gen_range(0..empty.count_ones());
+                let target = random_below(empty.count_ones());
                 let pos = nth_set_bit(empty, target);
                 return (board as u8, pos / 3, pos % 3);
             }
@@ -91,7 +91,7 @@ impl State for UltimateTicTacToe {
             .zip(&self.board_o)
             .map(|(&x, &o)| (!(x | o) & 0x1FF).count_ones())
             .sum();
-        let mut target = rand::thread_rng().gen_range(0..empty_count);
+        let mut target = random_below(empty_count);
         for board in 0..9 {
             let empty = !(self.board_x[board] | self.board_o[board]) & 0x1FF;
             empty_count = empty.count_ones();
