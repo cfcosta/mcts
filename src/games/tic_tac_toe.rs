@@ -90,6 +90,18 @@ impl State for TicTacToe {
         self.current_player = 1 - self.current_player;
     }
 
+    fn terminal_reward(&self, to_play: usize) -> Option<f32> {
+        if self.player_has_won(to_play) {
+            Some(-1.0)
+        } else if self.player_has_won(1 - to_play) {
+            Some(1.0)
+        } else if board_is_filled(self.board_x, self.board_o) {
+            Some(0.0)
+        } else {
+            None
+        }
+    }
+
     fn reward(&self, to_play: usize) -> f32 {
         if self.player_has_won(to_play) {
             -1.0
