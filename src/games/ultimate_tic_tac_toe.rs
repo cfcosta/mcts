@@ -134,15 +134,17 @@ impl State for UltimateTicTacToe {
         let mini_board = action.0 as usize;
         let position = action.1 * 3 + action.2;
         let move_mask = 1 << position;
-        let player_mask = 0u16.wrapping_sub(u16::from(self.current_player));
+        let player = self.current_player;
+        let player_mask = 0u16.wrapping_sub(u16::from(player));
         self.board_x[mini_board] |= move_mask & !player_mask;
         self.board_o[mini_board] |= move_mask & player_mask;
-        update_macro_board(
+        update_macro_board_for_player(
             &self.board_x,
             &self.board_o,
             &mut self.macro_board_x,
             &mut self.macro_board_o,
             mini_board,
+            player,
         );
         self.current_player = 1 - self.current_player;
         self.next_board = position;
@@ -210,6 +212,23 @@ fn update_macro_board(
     if WIN_TABLE[mini_board_x as usize] {
         *macro_board_x |= 1 << board_to_check;
     } else if WIN_TABLE[mini_board_o as usize] {
+        *macro_board_o |= 1 << board_to_check;
+    }
+}
+
+fn update_macro_board_for_player(
+    board_x: &[u16; 9],
+    board_o: &[u16; 9],
+    macro_board_x: &mut u16,
+    macro_board_o: &mut u16,
+    board_to_check: usize,
+    player: u8,
+) {
+    if player == 0 {
+        if WIN_TABLE[board_x[board_to_check] as usize] {
+            *macro_board_x |= 1 << board_to_check;
+        }
+    } else if WIN_TABLE[board_o[board_to_check] as usize] {
         *macro_board_o |= 1 << board_to_check;
     }
 }
