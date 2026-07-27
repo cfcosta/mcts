@@ -167,8 +167,7 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let first_child = self.arena.nodes.len();
         for action in legal_actions {
             let state = parent_state.step(action);
-            let new_node = Node::new(state, action, Some(id));
-            self.arena.add_node(new_node);
+            self.arena.add_child(state, action, id);
         }
         let end = self.arena.nodes.len();
         self.arena.get_node_mut(id).children = Children::from_range(first_child, end);
