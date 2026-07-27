@@ -44,6 +44,18 @@ const WIN_TABLE: [bool; 512] = {
     table
 };
 
+const POSITION_COORDS: [(u8, u8); 9] = [
+    (0, 0),
+    (0, 1),
+    (0, 2),
+    (1, 0),
+    (1, 1),
+    (1, 2),
+    (2, 0),
+    (2, 1),
+    (2, 2),
+];
+
 impl State for UltimateTicTacToe {
     type Action = (u8, u8, u8); // Mini-board, Row, Col
 
@@ -81,7 +93,8 @@ impl State for UltimateTicTacToe {
             if ((self.macro_board_x | self.macro_board_o) & board_mask) == 0 && empty != 0 {
                 let target = random_below(rng, bit_count(empty));
                 let pos = nth_set_bit(empty, target);
-                return (board as u8, pos / 3, pos % 3);
+                let (row, col) = POSITION_COORDS[pos as usize];
+                return (board as u8, row, col);
             }
         }
 
@@ -97,7 +110,8 @@ impl State for UltimateTicTacToe {
             empty_count = bit_count(empty);
             if target < empty_count {
                 let pos = nth_set_bit(empty, target);
-                return (board as u8, pos / 3, pos % 3);
+                let (row, col) = POSITION_COORDS[pos as usize];
+                return (board as u8, row, col);
             }
             target -= empty_count;
         }
