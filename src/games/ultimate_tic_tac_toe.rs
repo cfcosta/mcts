@@ -231,11 +231,11 @@ fn determine_legal_actions(
             && (board_x[next_board] | board_o[next_board]) != 0x1FF
         {
             let mut actions = Vec::with_capacity(9);
-            let occupied = board_x[next_board] | board_o[next_board];
-            for pos in 0..9 {
-                if occupied & (1 << pos) == 0 {
-                    actions.push((next_board as u8, pos / 3, pos % 3));
-                }
+            let mut empty = !(board_x[next_board] | board_o[next_board]) & 0x1FF;
+            while empty != 0 {
+                let pos = empty.trailing_zeros() as u8;
+                actions.push((next_board as u8, pos / 3, pos % 3));
+                empty &= empty - 1;
             }
             return actions;
         }
@@ -243,11 +243,11 @@ fn determine_legal_actions(
 
     let mut actions = Vec::with_capacity(81);
     for i in 0..9 {
-        let occupied = board_x[i] | board_o[i];
-        for pos in 0..9 {
-            if occupied & (1 << pos) == 0 {
-                actions.push((i as u8, pos / 3, pos % 3));
-            }
+        let mut empty = !(board_x[i] | board_o[i]) & 0x1FF;
+        while empty != 0 {
+            let pos = empty.trailing_zeros() as u8;
+            actions.push((i as u8, pos / 3, pos % 3));
+            empty &= empty - 1;
         }
     }
     actions
