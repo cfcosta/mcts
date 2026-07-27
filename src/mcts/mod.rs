@@ -102,30 +102,36 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
             return first;
         }
 
+        debug_assert!(
+            rest.iter()
+                .enumerate()
+                .all(|(offset, &id)| id == first + offset + 1),
+            "expanded children must remain contiguous"
+        );
+        let child_nodes = &self.arena.nodes[first..first + parent.children.len()];
         let parent_factor = if parent.n < self.sqrt_log.len() {
             self.sqrt_log[parent.n]
         } else {
             (parent.n as f64).ln().sqrt()
         };
         let exploration = self.c * parent_factor;
-        let score = |id: usize| {
-            let child = self.arena.get_node(id);
+        let score = |child: &Node<S>| {
             if child.n == 0 {
                 f64::INFINITY
             } else {
                 child.q + exploration * self.inverse_sqrt[child.n]
             }
         };
-        let mut best_child = first;
-        let mut best_score = score(first);
-        for &child in rest {
+        let mut best_offset = 0;
+        let mut best_score = score(&child_nodes[0]);
+        for (offset, child) in child_nodes[1..].iter().enumerate() {
             let child_score = score(child);
             if child_score.partial_cmp(&best_score).unwrap().is_ge() {
-                best_child = child;
+                best_offset = offset + 1;
                 best_score = child_score;
             }
         }
-        best_child
+        first + best_offset
     }
 
     fn expand(&mut self, id: usize) {
