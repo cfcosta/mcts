@@ -1,9 +1,11 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use mcts_rs::games::{TicTacToe, UltimateTicTacToe};
 use mcts_rs::{Mcts, State};
 use rand::seq::SliceRandom;
+
+mod games;
+use games::{TicTacToe, UltimateTicTacToe};
 
 const TTT_C: f64 = 0.5;
 const UTTT_C: f64 = 1.4142356237;
@@ -205,11 +207,7 @@ fn main() {
         println!("METRIC {name}={value:.3}");
     }
     let primary = &metrics[..6];
-    let geomean = (primary
-        .iter()
-        .map(|(_, value)| value.ln())
-        .sum::<f64>()
-        / primary.len() as f64)
-        .exp();
+    let geomean =
+        (primary.iter().map(|(_, value)| value.ln()).sum::<f64>() / primary.len() as f64).exp();
     println!("METRIC geomean_ns={geomean:.3}");
 }

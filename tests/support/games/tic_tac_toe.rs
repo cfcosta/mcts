@@ -1,5 +1,5 @@
-use crate::games::{bit_count, nth_empty_cell, random_below};
-use crate::state::State;
+use super::{bit_count, nth_empty_cell, random_below};
+use mcts_rs::State;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TicTacToe {

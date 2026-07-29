@@ -1,5 +1,5 @@
-use crate::games::{bit_count, nth_empty_cell, random_below};
-use crate::state::State;
+use super::{bit_count, nth_empty_cell, random_below};
+use mcts_rs::State;
 
 #[derive(Debug, Clone, Copy)]
 pub struct UltimateTicTacToe {
@@ -113,9 +113,8 @@ impl State for UltimateTicTacToe {
     fn step_in_place(&mut self, action: Self::Action) {
         let mini_board = action.0 as usize;
         let position = action.1 * 3 + action.2;
-        let was_empty = ((self.board_x[mini_board] | self.board_o[mini_board])
-            & (1 << position))
-            == 0;
+        let was_empty =
+            ((self.board_x[mini_board] | self.board_o[mini_board]) & (1 << position)) == 0;
         let move_mask = 1 << position;
         let player_mask = 0u16.wrapping_sub(u16::from(self.current_player));
         self.board_x[mini_board] |= move_mask & !player_mask;

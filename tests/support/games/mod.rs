@@ -1,8 +1,6 @@
-//! Reference game implementations of the [`State`](crate::State) trait.
-//!
-//! These are used by the examples, the integration test suite, and the
-//! benchmark suite. They are part of the public API so that all three see
-//! exactly the same code.
+//! The shared copy of the reference games used by the integration tests and
+//! the benchmark suites. The canonical, user-facing implementations live in
+//! `examples/`; keep the copies in sync by hand.
 
 pub mod tic_tac_toe;
 pub mod ultimate_tic_tac_toe;
@@ -49,7 +47,7 @@ pub(crate) fn nth_empty_cell(bits: u16, n: u32) -> (u8, u8) {
 }
 
 /// Uniformly samples `[0, upper)` with Lemire's multiply-high method.
-/// Bundled games use this small concrete helper instead of monomorphizing the
+/// The games use this small concrete helper instead of monomorphizing the
 /// much larger generic `gen_range` machinery into each rollout selector.
 pub(crate) fn random_below<R: rand::RngCore + ?Sized>(rng: &mut R, upper: u32) -> u32 {
     debug_assert!(upper > 0);

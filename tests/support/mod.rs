@@ -13,7 +13,9 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 
-pub use mcts_rs::games::{TicTacToe, UltimateTicTacToe};
+pub mod games;
+
+pub use games::{TicTacToe, UltimateTicTacToe};
 
 /// A game with exactly one legal action per state, ending in a draw after
 /// `length` moves. Nothing about it is random, so the search tree it produces

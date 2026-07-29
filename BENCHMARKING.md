@@ -82,8 +82,12 @@ choose from). If you deliberately change that contract, update those tests.
 
 ## Repo layout for this workflow
 
-- `src/games/` — the game implementations, shared by examples, tests, and
-  benches so all three exercise the same code.
+- `examples/` — the canonical `TicTacToe` / `UltimateTicTacToe`
+  implementations, each a self-contained demo of the `State` trait.
+- `tests/support/games/` — the copy of those games shared by the tests and
+  benches (a third copy lives in `.auto/bench/src/games/`). The library
+  itself no longer ships any game; keep the copies in sync by hand when a
+  game changes.
 - `tests/support/mod.rs` — shared test/bench helpers: deterministic synthetic
   games (`ChainGame`, `BanditGame`, `WideGame`), seeded-opponent game
   drivers, and the tree-invariant checker.

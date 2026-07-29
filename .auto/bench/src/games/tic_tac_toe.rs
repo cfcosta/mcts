@@ -1,31 +1,5 @@
-//! Tic-Tac-Toe self-play: MCTS plays both sides until the game ends.
-//!
-//! The `TicTacToe` implementation below is the canonical reference for
-//! implementing the [`State`] trait for a real game. The integration tests
-//! and benchmark suites keep a hand-synced copy of it in
-//! `tests/support/games/`.
-
-use mcts_rs::{Mcts, State};
-
-fn main() {
-    let mut game = TicTacToe::new();
-
-    while !game.is_terminal() {
-        let mut mcts = Mcts::new(game.clone(), 0.5);
-        let action = mcts.search(10000);
-        game = game.step(action);
-        game.render();
-    }
-
-    println!("Game over!");
-    if game.player_has_won(0) {
-        println!("Player 0 wins!");
-    } else if game.player_has_won(1) {
-        println!("Player 1 wins!");
-    } else {
-        println!("Draw!");
-    }
-}
+use super::{bit_count, nth_empty_cell, random_below};
+use mcts_rs::State;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TicTacToe {
@@ -201,60 +175,4 @@ fn board_is_filled(board_x: u16, board_o: u16) -> bool {
 
 fn set_bit(board: &mut u16, pos: u8) {
     *board |= 1 << pos;
-}
-
-const BIT_COUNT: [u8; 512] = {
-    let mut table = [0; 512];
-    let mut bits = 1;
-    while bits < table.len() {
-        table[bits] = table[bits >> 1] + (bits & 1) as u8;
-        bits += 1;
-    }
-    table
-};
-
-#[inline]
-fn bit_count(bits: u16) -> u32 {
-    u32::from(BIT_COUNT[bits as usize])
-}
-
-const NTH_EMPTY_CELL: [[u8; 9]; 512] = {
-    let mut table = [[0; 9]; 512];
-    let mut bits = 1;
-    while bits < table.len() {
-        let mut remaining = bits;
-        let mut rank = 0;
-        while remaining != 0 {
-            let position = remaining.trailing_zeros() as u8;
-            table[bits][rank] = (position / 3) << 2 | position % 3;
-            remaining &= remaining - 1;
-            rank += 1;
-        }
-        bits += 1;
-    }
-    table
-};
-
-#[inline]
-fn nth_empty_cell(bits: u16, n: u32) -> (u8, u8) {
-    let cell = NTH_EMPTY_CELL[bits as usize][n as usize];
-    (cell >> 2, cell & 3)
-}
-
-/// Uniformly samples `[0, upper)` with Lemire's multiply-high method.
-/// The game uses this small concrete helper instead of monomorphizing the
-/// much larger generic `gen_range` machinery into the rollout selector.
-fn random_below<R: rand::RngCore + ?Sized>(rng: &mut R, upper: u32) -> u32 {
-    debug_assert!(upper > 0);
-    loop {
-        let product = u64::from(rng.next_u32()) * u64::from(upper);
-        let low = product as u32;
-        if low < upper {
-            let threshold = upper.wrapping_neg() % upper;
-            if low < threshold {
-                continue;
-            }
-        }
-        return (product >> 32) as u32;
-    }
 }

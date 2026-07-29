@@ -15,6 +15,7 @@ A Rust implementation of the Monte Carlo Tree Search (MCTS) algorithm using an a
   - [Prerequisites](#prerequisites)
   - [Adding to Your Project](#adding-to-your-project)
   - [Running the Tic-Tac-Toe Example](#running-the-tic-tac-toe-example)
+  - [Testing and Benchmarking](#testing-and-benchmarking)
 - [Implementation Details](#implementation-details)
   - [Arena Allocator](#arena-allocator)
   - [MCTS Algorithm](#mcts-algorithm)
@@ -132,7 +133,7 @@ pub trait State {
 }
 ```
 
-By implementing this trait for your game or decision process, you can integrate it with the MCTS algorithm provided in this library. The `tic_tac_toe.rs` file offers an example implementation of the `State` trait for Tic-Tac-Toe.
+By implementing this trait for your game or decision process, you can integrate it with the MCTS algorithm provided in this library. The `examples/tic_tac_toe.rs` and `examples/ultimate_tic_tac_toe.rs` examples offer complete, self-contained implementations of the `State` trait, including the optional fast paths for rollouts and in-place expansion.
 
 ## License
 
