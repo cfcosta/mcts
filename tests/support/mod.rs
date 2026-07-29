@@ -329,7 +329,7 @@ where
     S: State,
     S::Action: PartialEq + Debug,
 {
-    let nodes = &mcts.arena.nodes;
+    let node_count = mcts.arena.len();
     let root_id = mcts.root_id;
     let root = mcts.arena.get_node(root_id);
 
@@ -339,7 +339,7 @@ where
         "{ctx}: root visits must equal search iterations"
     );
 
-    let mut seen = vec![false; nodes.len()];
+    let mut seen = vec![false; node_count];
     seen[root_id] = true;
     let mut queue = VecDeque::from([root_id]);
     let mut reachable = 0usize;
@@ -361,12 +361,12 @@ where
         }
     }
     assert_eq!(
-        reachable,
-        nodes.len(),
+        reachable, node_count,
         "{ctx}: arena contains nodes unreachable from the root"
     );
 
-    for (id, node) in nodes.iter().enumerate() {
+    for id in 0..node_count {
+        let node = mcts.arena.get_node(id);
         if node.n > 0 {
             assert!(
                 (node.q - node.reward_sum / node.n as f64).abs() <= 1e-9,

@@ -75,7 +75,7 @@ analysis of the search's cache behavior.
 
 ### Arena Allocator
 
-An arena allocator is used to efficiently manage memory for the nodes in the MCTS tree. Nodes are stored in a vector, and their relationships are represented by indices rather than pointers or references. This approach avoids the need for reference counting (`Rc`) and interior mutability (`RefCell`), leading to cleaner and more efficient code.
+An arena allocator is used to efficiently manage memory for the nodes in the MCTS tree. All nodes live in a single flat vector and relationships are represented by indices rather than pointers or references. Each node leads with a packed 32-byte hot record — visit statistics, parent link, and child span — so the selection and backpropagation loops only touch the leading bytes of every node they scan, while the game state and action stay in the cold tail. This approach avoids the need for reference counting (`Rc`) and interior mutability (`RefCell`), leading to cleaner and more efficient code.
 
 **Benefits:**
 
@@ -94,8 +94,8 @@ The MCTS algorithm consists of four main steps:
 
 **Key Components:**
 
-- **Node Struct** (`node.rs`): Represents a node in the search tree.
-- **Arena Struct** (`arena.rs`): Stores all nodes and manages parent-child relationships between nodes.
+- **Node Building Blocks** (`node.rs`): The `Node` layout with its packed `Hot` prefix, the `Children` id span, and the read-only `NodeRef` view of a single node.
+- **Arena Struct** (`arena.rs`): Stores the tree as one flat vector of nodes in a single allocation.
 - **MCTS Implementation** (`mod.rs`): Contains the logic for selection, expansion, simulation, and backpropagation.
 
 ### State Trait

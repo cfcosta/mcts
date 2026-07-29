@@ -28,7 +28,7 @@ fn bandit_tree_has_exact_shape_and_values() {
     assert_tree_invariants(&mcts, n, "bandit n=200");
 
     // Root plus one child per arm; terminal children are never expanded.
-    assert_eq!(mcts.arena.nodes.len(), 4);
+    assert_eq!(mcts.arena.len(), 4);
 
     let root = mcts.arena.get_node(mcts.root_id);
     for child_id in root.children.ids() {
@@ -58,7 +58,7 @@ fn chain_tree_grows_one_node_per_iteration_until_terminal() {
         mcts.search(n);
         assert_tree_invariants(&mcts, n, &ctx);
 
-        assert_eq!(mcts.arena.nodes.len(), 1 + length.min(n), "{ctx}");
+        assert_eq!(mcts.arena.len(), 1 + length.min(n), "{ctx}");
 
         let mut depth = 0usize;
         let mut id = mcts.root_id;
@@ -86,7 +86,7 @@ fn single_iteration_search_works_and_builds_a_minimal_tree() {
     mcts.search(1);
     assert_tree_invariants(&mcts, 1, "chain n=1");
     // One iteration: the root is expanded once and one playout is recorded.
-    assert_eq!(mcts.arena.nodes.len(), 2);
+    assert_eq!(mcts.arena.len(), 2);
 }
 
 #[test]
