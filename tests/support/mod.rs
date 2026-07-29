@@ -345,7 +345,7 @@ where
     let mut reachable = 0usize;
     while let Some(id) = queue.pop_front() {
         reachable += 1;
-        for &child_id in &mcts.arena.get_node(id).children {
+        for child_id in mcts.arena.get_node(id).children.ids() {
             let child = mcts.arena.get_node(child_id);
             assert_eq!(
                 child.parent,
@@ -409,8 +409,8 @@ where
             for &action in &legal {
                 let matching = node
                     .children
-                    .iter()
-                    .filter(|&&c| mcts.arena.get_node(c).action == action)
+                    .ids()
+                    .filter(|&c| mcts.arena.get_node(c).action == action)
                     .count();
                 assert_eq!(
                     matching, 1,
@@ -421,11 +421,7 @@ where
     }
 
     if iterations > 0 && !root.state.is_terminal() {
-        let child_visits: usize = root
-            .children
-            .iter()
-            .map(|&c| mcts.arena.get_node(c).n)
-            .sum();
+        let child_visits: usize = root.children.ids().map(|c| mcts.arena.get_node(c).n).sum();
         assert_eq!(
             child_visits, iterations,
             "{ctx}: every iteration must pass through exactly one child of the root"

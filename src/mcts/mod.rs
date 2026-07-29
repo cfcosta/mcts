@@ -5,7 +5,7 @@ use crate::state::State;
 use arena::Arena;
 use node::{Children, Node};
 
-use rand::seq::SliceRandom;
+use rand::Rng;
 use std::{collections::HashMap, sync::{Mutex, OnceLock}};
 
 fn shared_lookup_table(
@@ -83,9 +83,8 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
                         factors_ready = true;
                     }
                 }
-                let children = &self.arena.get_node(selected_id).children;
-                let random_child: usize = children.choose(&mut rng).unwrap().clone();
-                selected_id = random_child;
+                let children = self.arena.get_node(selected_id).children.ids();
+                selected_id = children.start + rng.gen_range(0..children.len());
             }
             let reward: f64 = self.simulate(selected_id, &mut rng);
             self.backprop(selected_id, reward);
@@ -93,14 +92,13 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
         let root_node: &Node<S> = self.arena.get_node(self.root_id);
         let best_child: usize = root_node
             .children
-            .iter()
+            .ids()
             .max_by(|&a, &b| {
-                let node_a_score = self.arena.get_node(*a).q;
-                let node_b_score = self.arena.get_node(*b).q;
+                let node_a_score = self.arena.get_node(a).q;
+                let node_b_score = self.arena.get_node(b).q;
                 node_a_score.partial_cmp(&node_b_score).unwrap()
             })
-            .unwrap()
-            .clone();
+            .unwrap();
 
         let best_action: S::Action = self.arena.get_node(best_child).action;
         best_action
@@ -131,21 +129,14 @@ impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
 
     fn get_best_child(&self, parent_id: usize) -> usize {
         let parent = self.arena.get_node(parent_id);
-        let (&first, rest) = parent
-            .children
-            .split_first()
-            .expect("get_best_child called on leaf node");
-        if rest.is_empty() {
+        let ids = parent.children.ids();
+        let first = ids.start;
+        debug_assert!(!ids.is_empty(), "get_best_child called on leaf node");
+        if ids.len() == 1 {
             return first;
         }
 
-        debug_assert!(
-            rest.iter()
-                .enumerate()
-                .all(|(offset, &id)| id == first + offset + 1),
-            "expanded children must remain contiguous"
-        );
-        let child_nodes = &self.arena.nodes[first..first + parent.children.len()];
+        let child_nodes = &self.arena.nodes[ids];
         if child_nodes.len() >= 8 && child_nodes[0].n == 0 {
             let offset = child_nodes
                 .iter()

@@ -31,7 +31,7 @@ fn bandit_tree_has_exact_shape_and_values() {
     assert_eq!(mcts.arena.nodes.len(), 4);
 
     let root = mcts.arena.get_node(mcts.root_id);
-    for &child_id in &root.children {
+    for child_id in root.children.ids() {
         let child = mcts.arena.get_node(child_id);
         let expected_q = match child.action {
             Arm::Win => 1.0,
@@ -67,13 +67,13 @@ fn chain_tree_grows_one_node_per_iteration_until_terminal() {
             let expected_visits = if depth == 0 { n } else { n - depth + 1 };
             assert_eq!(node.n, expected_visits, "{ctx}: visits at depth {depth}");
             assert_eq!(node.q, 0.0, "{ctx}: draws only, q must be exactly 0");
-            match node.children.as_slice() {
-                [] => break,
-                [child] => {
-                    id = *child;
+            match node.children.len() {
+                0 => break,
+                1 => {
+                    id = node.children.ids().next().unwrap();
                     depth += 1;
                 }
-                more => panic!("{ctx}: chain node has {} children", more.len()),
+                more => panic!("{ctx}: chain node has {more} children"),
             }
         }
         assert_eq!(depth, length.min(n), "{ctx}: chain depth");
