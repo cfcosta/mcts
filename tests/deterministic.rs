@@ -5,7 +5,7 @@
 
 mod support;
 
-use mcts_rs::{Mcts, State};
+use mcts_rs::{Bump, Mcts, State};
 use support::*;
 
 #[test]
@@ -15,7 +15,8 @@ fn bandit_search_picks_the_winning_arm() {
     // exactly +1 / 0 / -1, and the returned action (max q) is deterministic
     // for any n >= 3.
     for n in [3, 10, 500] {
-        let action = Mcts::new(BanditGame::new(), 1.0).search(n);
+        let bump = Bump::new();
+        let action = Mcts::new(&bump, BanditGame::new(), 1.0).search(n);
         assert_eq!(action, Arm::Win, "n = {n}");
     }
 }
@@ -23,7 +24,8 @@ fn bandit_search_picks_the_winning_arm() {
 #[test]
 fn bandit_tree_has_exact_shape_and_values() {
     let n = 200;
-    let mut mcts = Mcts::new(BanditGame::new(), 1.0);
+    let bump = Bump::new();
+    let mut mcts = Mcts::new(&bump, BanditGame::new(), 1.0);
     mcts.search(n);
     assert_tree_invariants(&mcts, n, "bandit n=200");
 
@@ -54,7 +56,8 @@ fn chain_tree_grows_one_node_per_iteration_until_terminal() {
     // and visited on every iteration from then on.
     for (length, n) in [(64, 50), (3, 100)] {
         let ctx = format!("chain length={length} n={n}");
-        let mut mcts = Mcts::new(ChainGame::new(length), 1.0);
+        let bump = Bump::new();
+        let mut mcts = Mcts::new(&bump, ChainGame::new(length), 1.0);
         mcts.search(n);
         assert_tree_invariants(&mcts, n, &ctx);
 
@@ -82,7 +85,8 @@ fn chain_tree_grows_one_node_per_iteration_until_terminal() {
 
 #[test]
 fn single_iteration_search_works_and_builds_a_minimal_tree() {
-    let mut mcts = Mcts::new(ChainGame::new(8), 1.0);
+    let bump = Bump::new();
+    let mut mcts = Mcts::new(&bump, ChainGame::new(8), 1.0);
     mcts.search(1);
     assert_tree_invariants(&mcts, 1, "chain n=1");
     // One iteration: the root is expanded once and one playout is recorded.
@@ -95,7 +99,8 @@ fn search_with_zero_iterations_panics() {
     // Pins current behavior: with no iterations the root has no children,
     // so best-child selection unwraps None. If this contract is deliberately
     // changed (e.g. to return an error), update this test.
-    Mcts::new(TicTacToe::new(), 0.5).search(0);
+    let bump = Bump::new();
+    Mcts::new(&bump, TicTacToe::new(), 0.5).search(0);
 }
 
 #[test]
@@ -106,5 +111,6 @@ fn search_from_a_terminal_state_panics() {
     let finished = ttt_after(&[(0, 0), (1, 1), (0, 1), (2, 2), (0, 2)]); // X wins the top row
     assert!(finished.is_terminal());
     assert_eq!(outcome(&finished), Outcome::XWins);
-    Mcts::new(finished, 0.5).search(10);
+    let bump = Bump::new();
+    Mcts::new(&bump, finished, 0.5).search(10);
 }

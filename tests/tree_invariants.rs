@@ -4,7 +4,7 @@
 
 mod support;
 
-use mcts_rs::Mcts;
+use mcts_rs::{Bump, Mcts};
 use support::*;
 
 #[test]
@@ -21,7 +21,8 @@ fn invariants_hold_for_tic_tac_toe_positions() {
     for (name, position) in &positions {
         for n in [1, 2, 3, 10, 137, 2000] {
             for c in [0.0, 0.5, 2.0] {
-                let mut mcts = Mcts::new(position.clone(), c);
+                let bump = Bump::new();
+                let mut mcts = Mcts::new(&bump, position.clone(), c);
                 mcts.search(n);
                 assert_tree_invariants(&mcts, n, &format!("ttt {name}, n={n}, c={c}"));
             }
@@ -37,7 +38,8 @@ fn invariants_hold_for_ultimate_tic_tac_toe_positions() {
     ];
     for (name, position) in &positions {
         for n in [1, 10, 400] {
-            let mut mcts = Mcts::new(position.clone(), 1.4);
+            let bump = Bump::new();
+            let mut mcts = Mcts::new(&bump, position.clone(), 1.4);
             mcts.search(n);
             assert_tree_invariants(&mcts, n, &format!("uttt {name}, n={n}"));
         }
@@ -47,17 +49,20 @@ fn invariants_hold_for_ultimate_tic_tac_toe_positions() {
 #[test]
 fn invariants_hold_for_synthetic_games() {
     for n in [1, 5, 100] {
-        let mut mcts = Mcts::new(ChainGame::new(16), 1.0);
+        let bump = Bump::new();
+        let mut mcts = Mcts::new(&bump, ChainGame::new(16), 1.0);
         mcts.search(n);
         assert_tree_invariants(&mcts, n, &format!("chain(16), n={n}"));
     }
     for n in [1, 3, 50] {
-        let mut mcts = Mcts::new(BanditGame::new(), 1.0);
+        let bump = Bump::new();
+        let mut mcts = Mcts::new(&bump, BanditGame::new(), 1.0);
         mcts.search(n);
         assert_tree_invariants(&mcts, n, &format!("bandit, n={n}"));
     }
     for n in [1, 64, 200] {
-        let mut mcts = Mcts::new(WideGame::new(64), 1.0);
+        let bump = Bump::new();
+        let mut mcts = Mcts::new(&bump, WideGame::new(64), 1.0);
         mcts.search(n);
         assert_tree_invariants(&mcts, n, &format!("wide(64), n={n}"));
     }

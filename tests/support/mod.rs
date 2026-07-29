@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::fmt::Debug;
 
-use mcts_rs::{Mcts, State};
+use mcts_rs::{Bump, Mcts, State};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -290,12 +290,18 @@ where
     state
 }
 
-/// A policy that runs a fresh MCTS search for every move.
+/// A policy that runs a fresh MCTS search for every move, reusing one bump
+/// arena across moves the way a real caller would.
 pub fn mcts_policy<S>(iterations: usize, c: f64) -> impl FnMut(&S) -> S::Action
 where
     S: State + Clone + Debug,
 {
-    move |state| Mcts::new(state.clone(), c).search(iterations)
+    let mut bump = Bump::new();
+    move |state| {
+        let action = Mcts::new(&bump, state.clone(), c).search(iterations);
+        bump.reset();
+        action
+    }
 }
 
 /// A uniformly random policy with a fixed seed, so the opponent's moves are

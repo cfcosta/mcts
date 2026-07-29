@@ -12,6 +12,7 @@ categories = ["algorithms", "data-structures"]
 
 
 [dependencies]
+bumpalo = { version = "3", features = ["collections"] }
 rand = "0.8.5"
 
 [dev-dependencies]

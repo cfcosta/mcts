@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use mcts_rs::{Mcts, State};
+use mcts_rs::{Bump, Mcts, State};
 use rand::seq::SliceRandom;
 
 mod games;
@@ -157,39 +157,56 @@ fn main() {
     let uttt_empty = UltimateTicTacToe::new();
     let uttt_mid = uttt_midgame();
     let uttt_step_action = uttt_mid.get_legal_actions()[0];
+    let mut bump = Bump::new();
 
     let metrics = [
         (
             "ttt_empty_ns",
             median_ns(24, 5, || {
-                Mcts::new(black_box(ttt_empty.clone()), TTT_C).search(10_000)
+                let action = Mcts::new(&bump, black_box(ttt_empty.clone()), TTT_C).search(10_000);
+                bump.reset();
+                action
             }),
         ),
         (
             "ttt_mid_ns",
             median_ns(64, 5, || {
-                Mcts::new(black_box(ttt_mid.clone()), TTT_C).search(10_000)
+                let action = Mcts::new(&bump, black_box(ttt_mid.clone()), TTT_C).search(10_000);
+                bump.reset();
+                action
             }),
         ),
         (
             "uttt_empty_ns",
             median_ns(20, 5, || {
-                Mcts::new(black_box(uttt_empty.clone()), UTTT_C).search(1_000)
+                let action = Mcts::new(&bump, black_box(uttt_empty.clone()), UTTT_C).search(1_000);
+                bump.reset();
+                action
             }),
         ),
         (
             "uttt_mid_ns",
             median_ns(20, 5, || {
-                Mcts::new(black_box(uttt_mid.clone()), UTTT_C).search(1_000)
+                let action = Mcts::new(&bump, black_box(uttt_mid.clone()), UTTT_C).search(1_000);
+                bump.reset();
+                action
             }),
         ),
         (
             "deep_chain_ns",
-            median_ns(24, 5, || Mcts::new(ChainGame::new(512), 1.0).search(2_000)),
+            median_ns(24, 5, || {
+                let action = Mcts::new(&bump, ChainGame::new(512), 1.0).search(2_000);
+                bump.reset();
+                action
+            }),
         ),
         (
             "wide_512_ns",
-            median_ns(32, 5, || Mcts::new(WideGame::new(512), 1.0).search(1_024)),
+            median_ns(32, 5, || {
+                let action = Mcts::new(&bump, WideGame::new(512), 1.0).search(1_024);
+                bump.reset();
+                action
+            }),
         ),
         (
             "uttt_rollout_ns",

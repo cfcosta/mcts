@@ -5,6 +5,7 @@ use crate::state::State;
 use arena::Arena;
 use node::{Children, Node, NO_PARENT};
 
+use bumpalo::Bump;
 use rand::Rng;
 use std::{
     collections::HashMap,
@@ -50,17 +51,23 @@ fn sqrt_log_table(required: usize) -> &'static [f64] {
     })
 }
 
-pub struct Mcts<S: State> {
-    pub arena: Arena<S>,
+pub struct Mcts<'b, S: State> {
+    pub arena: Arena<'b, S>,
     pub root_id: usize,
     c: f64,
     inverse_sqrt: &'static [f64],
     sqrt_log: &'static [f64],
 }
 
-impl<S: State + std::fmt::Debug + std::clone::Clone> Mcts<S> {
-    pub fn new(state: S, c: f64) -> Self {
-        let mut arena: Arena<S> = Arena::new();
+impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
+    /// Creates a search tree rooted at `state`, allocating nodes in `bump`.
+    ///
+    /// Callers running repeated searches should keep one [`Bump`] alive and
+    /// [`reset`](Bump::reset) it between searches, once the `Mcts` is
+    /// dropped: the arena then reuses its retained chunk and steady-state
+    /// searches never touch the system allocator.
+    pub fn new(bump: &'b Bump, state: S, c: f64) -> Self {
+        let mut arena: Arena<'b, S> = Arena::new(bump);
         let root_id: usize = arena.push(state, S::default_action(), None);
         Mcts {
             arena,

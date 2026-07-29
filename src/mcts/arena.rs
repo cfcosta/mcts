@@ -1,21 +1,28 @@
+use bumpalo::{collections::Vec as BumpVec, Bump};
+
 use crate::mcts::node::{Hot, Node, NodeRef, NO_PARENT};
 use crate::state::State;
 
 /// The search tree: one flat vector of nodes, related by indices.
 ///
-/// A single backing allocation matters here: a fresh tree is built and torn
-/// down per search, and one large vector settles into memory the allocator
-/// keeps warm across searches, where several parallel arrays make it return
-/// the pages to the OS between trees and fault them back in on the next
-/// search. The hot/cold separation lives inside each node instead, as its
-/// [`Hot`] prefix.
-pub struct Arena<S: State> {
-    pub nodes: Vec<Node<S>>,
+/// The vector lives in a caller-owned [`Bump`] arena rather than the global
+/// allocator. A fresh tree is built and torn down per search, and
+/// general-purpose allocators react to that rhythm — glibc in particular
+/// adapts its trim and mmap thresholds to the tree size and ends up
+/// returning the pages to the OS after every search and faulting them back
+/// in on the next one. A bump arena reused across searches sidesteps the
+/// allocator entirely: [`Bump::reset`] keeps the largest chunk, so steady-
+/// state searches perform no allocator or system calls on any platform. The
+/// hot/cold separation lives inside each node, as its [`Hot`] prefix.
+pub struct Arena<'b, S: State> {
+    pub nodes: BumpVec<'b, Node<S>>,
 }
 
-impl<S: State> Arena<S> {
-    pub fn new() -> Self {
-        Arena { nodes: Vec::new() }
+impl<'b, S: State> Arena<'b, S> {
+    pub fn new(bump: &'b Bump) -> Self {
+        Arena {
+            nodes: BumpVec::new_in(bump),
+        }
     }
 
     /// The number of nodes in the tree.

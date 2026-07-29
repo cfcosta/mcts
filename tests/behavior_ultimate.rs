@@ -4,7 +4,7 @@
 
 mod support;
 
-use mcts_rs::{Mcts, State};
+use mcts_rs::{Bump, Mcts, State};
 use support::*;
 
 /// Same exploration constant as the bundled example.
@@ -19,7 +19,8 @@ fn search_always_returns_a_legal_action() {
     ];
     for (name, position) in &positions {
         for n in [1, 50, 800] {
-            let action = Mcts::new(position.clone(), C).search(n);
+            let bump = Bump::new();
+            let action = Mcts::new(&bump, position.clone(), C).search(n);
             assert!(
                 position.get_legal_actions().contains(&action),
                 "{name}, n={n}: illegal action {action:?}"
@@ -67,7 +68,8 @@ fn self_play_terminates_with_valid_trees_at_every_move() {
     let mut state = UltimateTicTacToe::new();
     let mut plies = 0usize;
     while !state.is_terminal() {
-        let mut mcts = Mcts::new(state.clone(), C);
+        let bump = Bump::new();
+        let mut mcts = Mcts::new(&bump, state.clone(), C);
         let action = mcts.search(n);
         assert_tree_invariants(&mcts, n, &format!("self-play ply {plies}"));
         assert!(

@@ -7,15 +7,16 @@
 //! and benchmark suites keep a hand-synced copy of it in
 //! `tests/support/games/`.
 
-use mcts_rs::{Mcts, State};
+use mcts_rs::{Bump, Mcts, State};
 
 fn main() {
     let mut game = UltimateTicTacToe::new();
+    let mut bump = Bump::new();
     while !game.is_terminal() {
-        let mut mcts = Mcts::new(game.clone(), 1.4142356237);
-        let action = mcts.search(1500);
+        let action = Mcts::new(&bump, game.clone(), 1.4142356237).search(1500);
         game = game.step(action);
         game.render();
+        bump.reset();
     }
 
     println!("Game over!");

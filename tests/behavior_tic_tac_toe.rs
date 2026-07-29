@@ -9,7 +9,7 @@
 
 mod support;
 
-use mcts_rs::{Mcts, State};
+use mcts_rs::{Bump, Mcts, State};
 use support::*;
 
 /// Same exploration constant as the bundled example.
@@ -39,7 +39,8 @@ fn search_always_returns_a_legal_action() {
     ];
     for (name, position) in &positions {
         for n in [1, 2, 7, 100] {
-            let action = Mcts::new(position.clone(), C).search(n);
+            let bump = Bump::new();
+            let action = Mcts::new(&bump, position.clone(), C).search(n);
             assert!(
                 position.get_legal_actions().contains(&action),
                 "{name}, n={n}: illegal action {action:?}"
@@ -67,7 +68,8 @@ fn finds_the_immediate_winning_move() {
         ),
     ];
     for (name, position, winning_move) in cases {
-        let action = Mcts::new(position, C).search(2000);
+        let bump = Bump::new();
+        let action = Mcts::new(&bump, position, C).search(2000);
         assert_eq!(action, winning_move, "{name}: must play the winning move");
     }
 }
@@ -78,7 +80,8 @@ fn blocks_the_opponents_winning_move() {
     // threatens (0,2); any other X move lets O win on the spot.
     let position = ttt_after(&[(1, 1), (0, 0), (2, 2), (0, 1)]);
     for attempt in 0..3 {
-        let action = Mcts::new(position.clone(), C).search(5000);
+        let bump = Bump::new();
+        let action = Mcts::new(&bump, position.clone(), C).search(5000);
         assert_eq!(action, (0, 2), "attempt {attempt}: must block O's win");
     }
 }
@@ -88,7 +91,8 @@ fn prefers_winning_to_blocking() {
     // X can win at (0,2); O threatens (2,2). Taking the win ends the game,
     // so it must be preferred over blocking.
     let position = ttt_after(&[(0, 0), (2, 0), (0, 1), (2, 1)]);
-    let action = Mcts::new(position, C).search(2000);
+    let bump = Bump::new();
+    let action = Mcts::new(&bump, position, C).search(2000);
     assert_eq!(action, (0, 2), "must take the win, not block");
 }
 
