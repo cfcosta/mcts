@@ -93,6 +93,85 @@ fn single_iteration_search_works_and_builds_a_minimal_tree() {
     assert_eq!(mcts.arena.len(), 2);
 }
 
+/// Every arm loses for the mover, so any visited root child ends at q = -1
+/// while unvisited arms stay at q = 0. Which arm the first iteration visits
+/// depends on the RNG, but the asserted property does not.
+#[derive(Debug, Clone)]
+struct LosingGame {
+    taken: Option<u8>,
+}
+
+impl State for LosingGame {
+    type Action = u8;
+
+    fn default_action() -> Self::Action {
+        0
+    }
+
+    fn player_has_won(&self, player: usize) -> bool {
+        self.taken.is_some() && player == 1
+    }
+
+    fn is_terminal(&self) -> bool {
+        self.taken.is_some()
+    }
+
+    fn get_legal_actions(&self) -> Vec<Self::Action> {
+        if self.taken.is_some() {
+            Vec::new()
+        } else {
+            vec![0, 1, 2]
+        }
+    }
+
+    fn to_play(&self) -> usize {
+        usize::from(self.taken.is_some())
+    }
+
+    fn step(&self, action: Self::Action) -> Self {
+        LosingGame {
+            taken: Some(action),
+        }
+    }
+
+    fn reward(&self, to_play: usize) -> f32 {
+        if self.player_has_won(to_play) {
+            -1.0
+        } else if self.player_has_won(1 - to_play) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    fn render(&self) {}
+}
+
+#[test]
+fn unvisited_root_children_count_as_q_zero_in_the_final_pick() {
+    // A single iteration visits exactly one arm, which ends at q = -1; the
+    // other two arms are never visited. The final pick must value those
+    // unvisited children at exactly q = 0 — never NaN or -inf — and so
+    // return one of them over the visited losing arm, for any RNG outcome.
+    for round in 0..32 {
+        let bump = Bump::new();
+        let mut mcts = Mcts::new(&bump, LosingGame { taken: None }, 1.0);
+        let action = mcts.search(1);
+        let root = mcts.arena.get_node(mcts.root_id);
+        let chosen = root
+            .children
+            .ids()
+            .find(|&id| mcts.arena.get_node(id).action == action)
+            .unwrap();
+        assert_eq!(
+            mcts.arena.get_node(chosen).n,
+            0,
+            "round {round}: the final pick must prefer an unvisited arm (q = 0) \
+             over the visited losing arm (q = -1)"
+        );
+    }
+}
+
 #[test]
 #[should_panic(expected = "Option::unwrap()")]
 fn search_with_zero_iterations_panics() {
