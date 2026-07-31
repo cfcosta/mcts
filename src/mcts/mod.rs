@@ -12,11 +12,11 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-fn shared_lookup_table(
-    tables: &'static OnceLock<Mutex<HashMap<usize, &'static [f64]>>>,
+fn shared_lookup_table<T: Copy>(
+    tables: &'static OnceLock<Mutex<HashMap<usize, &'static [T]>>>,
     required: usize,
-    value: fn(usize) -> f64,
-) -> &'static [f64] {
+    value: fn(usize) -> T,
+) -> &'static [T] {
     let len = required
         .saturating_add(1)
         .checked_next_power_of_two()
@@ -29,13 +29,15 @@ fn shared_lookup_table(
     })
 }
 
-fn inverse_sqrt_table(required: usize) -> &'static [f64] {
-    static TABLES: OnceLock<Mutex<HashMap<usize, &'static [f64]>>> = OnceLock::new();
+// f32 like the statistics it scores: sixteen entries per cache line, and
+// no widening of the child's q on the hot scan path.
+fn inverse_sqrt_table(required: usize) -> &'static [f32] {
+    static TABLES: OnceLock<Mutex<HashMap<usize, &'static [f32]>>> = OnceLock::new();
     shared_lookup_table(&TABLES, required, |n| {
         if n == 0 {
-            f64::INFINITY
+            f32::INFINITY
         } else {
-            1.0 / (n as f64).sqrt()
+            1.0 / (n as f32).sqrt()
         }
     })
 }
@@ -55,7 +57,7 @@ pub struct Mcts<'b, S: State> {
     pub arena: Arena<'b, S>,
     pub root_id: usize,
     c: f64,
-    inverse_sqrt: &'static [f64],
+    inverse_sqrt: &'static [f32],
     sqrt_log: &'static [f64],
 }
 
@@ -73,7 +75,7 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
             arena,
             root_id,
             c,
-            inverse_sqrt: &[f64::INFINITY],
+            inverse_sqrt: &[f32::INFINITY],
             sqrt_log: &[0.0],
         }
     }
@@ -180,14 +182,20 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         } else {
             (parent_n as f64).ln().sqrt()
         };
-        let exploration = self.c * parent_factor;
+        // The scan itself runs entirely in f32 — the precision of the
+        // statistics being compared; only the once-per-scan parent factor
+        // is computed in f64.
+        let exploration = (self.c * parent_factor) as f32;
         let score = |child: &Stats| {
             if child.n == 0 {
-                f64::INFINITY
+                f32::INFINITY
             } else {
-                child.q as f64 + exploration * self.inverse_sqrt[child.n as usize]
+                child.q + exploration * self.inverse_sqrt[child.n as usize]
             }
         };
+        if child_stats.len() >= 8 {
+            return first + Self::argmax_wide(child_stats, score);
+        }
         let mut best_offset = 0;
         let mut best_score = score(&child_stats[0]);
         let mut offset = 1;
@@ -212,6 +220,50 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
             }
         }
         first + best_offset
+    }
+
+    /// The offset of the best-scoring entry, resolving ties toward the
+    /// highest offset — the same winner the sequential `is_ge` scan picks.
+    ///
+    /// Eight independent running maxima (one per lane of a fixed-width
+    /// chunk) replace the single running maximum, so the comparisons carry
+    /// no loop-to-loop dependency: the lanes pipeline instead of waiting
+    /// on each other, and the compiler is free to pack them into vector
+    /// registers where the target allows.
+    fn argmax_wide(child_stats: &[Stats], score: impl Fn(&Stats) -> f32) -> usize {
+        let mut lane_best = [f32::NEG_INFINITY; 8];
+        let mut lane_offset = [0u32; 8];
+        let mut base = 0u32;
+        let mut chunks = child_stats.chunks_exact(8);
+        for chunk in &mut chunks {
+            for lane in 0..8 {
+                let lane_score = score(&chunk[lane]);
+                if lane_score >= lane_best[lane] {
+                    lane_best[lane] = lane_score;
+                    lane_offset[lane] = base + lane as u32;
+                }
+            }
+            base += 8;
+        }
+        // Within a lane, `>=` already kept the last achiever; across lanes
+        // the last achiever of the overall maximum is the largest offset.
+        let mut best_score = f32::NEG_INFINITY;
+        let mut best_offset = 0u32;
+        for lane in 0..8 {
+            if lane_best[lane] > best_score
+                || (lane_best[lane] == best_score && lane_offset[lane] > best_offset)
+            {
+                best_score = lane_best[lane];
+                best_offset = lane_offset[lane];
+            }
+        }
+        for (i, child) in chunks.remainder().iter().enumerate() {
+            if score(child) >= best_score {
+                best_score = score(child);
+                best_offset = base + i as u32;
+            }
+        }
+        best_offset as usize
     }
 
     fn expand(&mut self, id: usize, legal_buf: &mut Vec<S::Action>) {
