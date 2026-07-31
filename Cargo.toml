@@ -22,6 +22,14 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "mcts"
 harness = false
 
+# Whole-program optimization: with the entire search monomorphized into
+# one unit, LLVM can inline and lay out the hot loop globally instead of
+# per codegen unit. Panics keep unwinding — the contract tests assert on
+# should_panic.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 # Keep debug symbols in benchmark builds so profilers (perf, flamegraph)
 # can attribute samples to functions.
 [profile.bench]

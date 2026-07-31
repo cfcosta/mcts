@@ -9,3 +9,9 @@ mcts-rs = { path = "../.." }
 rand = "0.8.5"
 
 [workspace]
+
+# Match the library's release profile (this crate is its own workspace
+# root, so it does not inherit the parent manifest's profile).
+[profile.release]
+lto = "fat"
+codegen-units = 1
