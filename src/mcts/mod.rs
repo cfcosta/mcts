@@ -6,7 +6,7 @@ use arena::Arena;
 use node::{Children, Node, NO_PARENT};
 
 use bumpalo::Bump;
-use rand::Rng;
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},
@@ -83,7 +83,13 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         let cached_visits = current_visits.saturating_add(n);
         let mut inverse_ready = self.inverse_sqrt.len() > cached_visits;
         let mut factors_ready = self.sqrt_log.len() > cached_visits;
-        let mut rng = rand::thread_rng();
+        // A search-local generator: unlike `thread_rng`, every draw avoids
+        // the thread-local access, reseeding checks, and ChaCha block
+        // machinery — the rollout loop only needs statistical uniformity,
+        // not cryptographic quality. Seeding from `thread_rng` (rather than
+        // the OS) keeps search setup free of syscalls.
+        let mut rng =
+            SmallRng::from_rng(rand::thread_rng()).expect("thread_rng cannot fail to produce a seed");
         // Reused across every expansion of this search; cleared before each
         // fill, so after the first few expansions it never reallocates.
         let mut legal_buf: Vec<S::Action> = Vec::new();
