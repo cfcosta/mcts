@@ -47,6 +47,18 @@ fn invariants_hold_for_ultimate_tic_tac_toe_positions() {
 }
 
 #[test]
+fn invariants_hold_across_repeated_searches_on_one_tree() {
+    // The tree is reusable: a second search call continues where the first
+    // stopped, and every invariant must hold for the accumulated totals.
+    let bump = Bump::new();
+    let mut mcts = Mcts::new(&bump, TicTacToe::new(), 0.5);
+    for total in [50, 100, 150] {
+        mcts.search(50);
+        assert_tree_invariants(&mcts, total, &format!("ttt accumulated n={total}"));
+    }
+}
+
+#[test]
 fn invariants_hold_for_synthetic_games() {
     for n in [1, 5, 100] {
         let bump = Bump::new();

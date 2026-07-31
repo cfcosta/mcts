@@ -3,7 +3,7 @@ pub mod node;
 
 use crate::state::State;
 use arena::Arena;
-use node::{Children, Node, NO_PARENT};
+use node::{Children, Node};
 
 use bumpalo::Bump;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -93,9 +93,15 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         // Reused across every expansion of this search; cleared before each
         // fill, so after the first few expansions it never reallocates.
         let mut legal_buf: Vec<S::Action> = Vec::new();
+        // The nodes visited by the current descent, root first. Recording
+        // them lets backpropagation replay the path instead of chasing
+        // parent pointers, where every step's load depends on the previous
+        // one. Reused across iterations like `legal_buf`.
+        let mut path: Vec<u32> = Vec::new();
 
         for _ in 0..n {
-            let mut selected_id: usize = self.select();
+            path.clear();
+            let mut selected_id: usize = self.select(&mut path);
             if !self.arena.nodes[selected_id].state.is_terminal() {
                 self.expand(selected_id, &mut legal_buf);
                 let children = self.arena.nodes[selected_id].hot.children.ids();
@@ -112,9 +118,10 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
                     }
                 }
                 selected_id = children.start + rng.gen_range(0..children.len());
+                path.push(selected_id as u32);
             }
             let reward: f64 = self.simulate(selected_id, &mut rng);
-            self.backprop(selected_id, reward);
+            self.backprop(&path, reward);
         }
         let best_child: usize = self.arena.nodes[self.root_id]
             .hot
@@ -142,9 +149,12 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         self.sqrt_log = sqrt_log_table(cached_visits);
     }
 
-    fn select(&mut self) -> usize {
+    /// Descends from the root to a leaf, appending every visited node
+    /// (including both ends) to `path`.
+    fn select(&mut self, path: &mut Vec<u32>) -> usize {
         let mut current: usize = 0;
         loop {
+            path.push(current as u32);
             if self.arena.nodes[current].hot.children.is_empty() {
                 return current;
             }
@@ -239,17 +249,17 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         }
     }
 
-    fn backprop(&mut self, id: usize, mut reward: f64) {
-        let mut current: usize = id;
-        loop {
-            let hot = &mut self.arena.nodes[current].hot;
+    /// Applies `reward` (from the last path node's perspective) to every
+    /// node on `path`, flipping sign per level. Walking the recorded path
+    /// leaf-first touches the same nodes in the same order as following
+    /// parent links did, but the ids are all known up front, so the stat
+    /// updates are independent loads instead of a serial pointer chase.
+    fn backprop(&mut self, path: &[u32], mut reward: f64) {
+        for &id in path.iter().rev() {
+            let hot = &mut self.arena.nodes[id as usize].hot;
             hot.reward_sum += reward;
             hot.n += 1;
             hot.q = hot.reward_sum / hot.n as f64;
-            if hot.parent == NO_PARENT {
-                break;
-            }
-            current = hot.parent as usize;
             reward = -reward;
         }
     }
