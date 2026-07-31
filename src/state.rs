@@ -12,6 +12,17 @@ pub trait State {
     fn is_terminal(&self) -> bool;
     fn get_legal_actions(&self) -> Vec<Self::Action>;
 
+    /// Appends every legal action to `actions`, without clearing it.
+    ///
+    /// The search expands through this method with one scratch buffer reused
+    /// across expansions, so an implementation that pushes directly into
+    /// `actions` (rather than delegating to
+    /// [`get_legal_actions`](State::get_legal_actions), as the default does)
+    /// removes the per-expansion allocation entirely.
+    fn fill_legal_actions(&self, actions: &mut Vec<Self::Action>) {
+        actions.extend(self.get_legal_actions());
+    }
+
     /// Selects a uniformly random legal action.
     ///
     /// State implementations may override this to avoid allocating the action

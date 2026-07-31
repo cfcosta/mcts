@@ -63,7 +63,13 @@ impl State for TicTacToe {
     }
 
     fn get_legal_actions(&self) -> Vec<Self::Action> {
-        determine_legal_actions(self.board_x, self.board_o)
+        let mut actions = Vec::new();
+        self.fill_legal_actions(&mut actions);
+        actions
+    }
+
+    fn fill_legal_actions(&self, actions: &mut Vec<Self::Action>) {
+        determine_legal_actions(self.board_x, self.board_o, actions);
     }
 
     fn get_random_legal_action<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Self::Action {
@@ -157,16 +163,15 @@ impl Default for TicTacToe {
     }
 }
 
-fn determine_legal_actions(board_x: u16, board_o: u16) -> Vec<(u8, u8)> {
+fn determine_legal_actions(board_x: u16, board_o: u16, actions: &mut Vec<(u8, u8)>) {
     let empty = !(board_x | board_o) & 0x1FF;
-    let mut actions: Vec<(u8, u8)> = Vec::with_capacity(bit_count(empty) as usize);
+    actions.reserve(bit_count(empty) as usize);
     for pos in 0..9 {
         let mask = 1 << pos;
         if (board_x & mask) == 0 && (board_o & mask) == 0 {
             actions.push((pos / 3, pos % 3));
         }
     }
-    actions
 }
 
 fn board_is_filled(board_x: u16, board_o: u16) -> bool {

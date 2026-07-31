@@ -65,6 +65,12 @@ impl State for UltimateTicTacToe {
     }
 
     fn get_legal_actions(&self) -> Vec<Self::Action> {
+        let mut actions = Vec::new();
+        self.fill_legal_actions(&mut actions);
+        actions
+    }
+
+    fn fill_legal_actions(&self, actions: &mut Vec<Self::Action>) {
         determine_legal_actions(
             &self.board_x,
             &self.board_o,
@@ -72,7 +78,8 @@ impl State for UltimateTicTacToe {
             self.macro_board_o,
             self.next_board,
             self.occupied,
-        )
+            actions,
+        );
     }
 
     fn get_random_legal_action<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> Self::Action {
@@ -253,7 +260,8 @@ fn determine_legal_actions(
     macro_board_o: u16,
     next_board: u8,
     occupied: u8,
-) -> Vec<(u8, u8, u8)> {
+    actions: &mut Vec<(u8, u8, u8)>,
+) {
     if next_board < 9 {
         let next_board = next_board as usize;
         let board_mask = 1 << next_board;
@@ -261,17 +269,17 @@ fn determine_legal_actions(
             && (board_x[next_board] | board_o[next_board]) != 0x1FF
         {
             let mut empty = !(board_x[next_board] | board_o[next_board]) & 0x1FF;
-            let mut actions = Vec::with_capacity(bit_count(empty) as usize);
+            actions.reserve(bit_count(empty) as usize);
             while empty != 0 {
                 let pos = empty.trailing_zeros() as u8;
                 actions.push((next_board as u8, pos / 3, pos % 3));
                 empty &= empty - 1;
             }
-            return actions;
+            return;
         }
     }
 
-    let mut actions = Vec::with_capacity(81 - occupied as usize);
+    actions.reserve(81 - occupied as usize);
     for i in 0..9 {
         let mut empty = !(board_x[i] | board_o[i]) & 0x1FF;
         while empty != 0 {
@@ -280,7 +288,6 @@ fn determine_legal_actions(
             empty &= empty - 1;
         }
     }
-    actions
 }
 
 impl UltimateTicTacToe {

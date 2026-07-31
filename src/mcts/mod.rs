@@ -84,11 +84,14 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         let mut inverse_ready = self.inverse_sqrt.len() > cached_visits;
         let mut factors_ready = self.sqrt_log.len() > cached_visits;
         let mut rng = rand::thread_rng();
+        // Reused across every expansion of this search; cleared before each
+        // fill, so after the first few expansions it never reallocates.
+        let mut legal_buf: Vec<S::Action> = Vec::new();
 
         for _ in 0..n {
             let mut selected_id: usize = self.select();
             if !self.arena.nodes[selected_id].state.is_terminal() {
-                self.expand(selected_id);
+                self.expand(selected_id, &mut legal_buf);
                 let children = self.arena.nodes[selected_id].hot.children.ids();
                 if children.len() > 1 {
                     if !inverse_ready {
@@ -199,11 +202,12 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         first + best_offset
     }
 
-    fn expand(&mut self, id: usize) {
-        let legal_actions: Vec<S::Action> = self.arena.nodes[id].state.get_legal_actions();
+    fn expand(&mut self, id: usize, legal_buf: &mut Vec<S::Action>) {
+        legal_buf.clear();
+        self.arena.nodes[id].state.fill_legal_actions(legal_buf);
         let parent_state: S = self.arena.nodes[id].state.clone();
         let first_child = self.arena.len();
-        for action in legal_actions {
+        for &action in legal_buf.iter() {
             if S::IN_PLACE_EXPANSION {
                 let child = self.arena.push(parent_state.clone(), action, Some(id));
                 self.arena.nodes[child].state.step_in_place(action);

@@ -42,6 +42,11 @@ impl State for ChainGame {
             vec![()]
         }
     }
+    fn fill_legal_actions(&self, actions: &mut Vec<Self::Action>) {
+        if !self.is_terminal() {
+            actions.push(());
+        }
+    }
     fn to_play(&self) -> usize {
         (self.length - self.remaining) % 2
     }
@@ -86,6 +91,11 @@ impl State for WideGame {
             Vec::new()
         } else {
             (0..self.width).collect()
+        }
+    }
+    fn fill_legal_actions(&self, actions: &mut Vec<Self::Action>) {
+        if !self.is_terminal() {
+            actions.extend(0..self.width);
         }
     }
     fn to_play(&self) -> usize {
