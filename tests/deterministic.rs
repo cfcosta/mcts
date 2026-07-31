@@ -173,6 +173,28 @@ fn unvisited_root_children_count_as_q_zero_in_the_final_pick() {
 }
 
 #[test]
+fn losing_game_means_stay_exact_for_any_iteration_count() {
+    // Every playout returns the same reward, so each node's mean is exact
+    // at every visit count: a pin on the mean arithmetic and the per-level
+    // sign flip that must survive any change to how statistics are stored.
+    for n in [1, 7, 64, 1000] {
+        let bump = Bump::new();
+        let mut mcts = Mcts::new(&bump, LosingGame { taken: None }, 1.0);
+        mcts.search(n);
+        let root = mcts.arena.get_node(mcts.root_id);
+        assert_eq!(root.q, 1.0, "n={n}: root mean must be exactly +1");
+        for id in root.children.ids() {
+            let child = mcts.arena.get_node(id);
+            if child.n > 0 {
+                assert_eq!(child.q, -1.0, "n={n}: visited arm mean must be exactly -1");
+            } else {
+                assert_eq!(child.q, 0.0, "n={n}: unvisited arm must stay at 0");
+            }
+        }
+    }
+}
+
+#[test]
 #[should_panic(expected = "Option::unwrap()")]
 fn search_with_zero_iterations_panics() {
     // Pins current behavior: with no iterations the root has no children,

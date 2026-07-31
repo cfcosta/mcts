@@ -2,7 +2,7 @@ use std::{fmt, ops::Range};
 
 use crate::state::State;
 
-/// Sentinel in [`Hot::parent`] for the root, which has no parent.
+/// Sentinel in [`Node::parent`] for the root, which has no parent.
 pub(crate) const NO_PARENT: u32 = u32::MAX;
 
 /// An immutable child list, stored as a span of arena ids.
@@ -45,44 +45,44 @@ impl fmt::Debug for Children {
     }
 }
 
-/// The hot part of a node: everything a UCB scan reads and a backpropagation
-/// writes — visit statistics, parent link, and child span — packed into
-/// exactly 32 bytes.
+/// The search statistics of one node: the only data a UCB scan reads per
+/// candidate and a backpropagation writes per level.
+///
+/// Stored in a dense array parallel to the node array (see
+/// [`Arena`](crate::mcts::arena::Arena)), eight entries per cache line, so
+/// scanning a contiguous child span touches an eighth of the lines that
+/// full nodes would. `q` is a running mean rather than a sum that gets
+/// divided on read: the mean is what every read wants, and an f32 holds it
+/// exactly for the deterministic small-count cases and to ~1e-7 relative
+/// everywhere else, which is far below the noise of the playouts.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub struct Hot {
-    pub q: f64, // average reward
-    pub reward_sum: f64,
+pub struct Stats {
+    pub q: f32, // running mean reward
     pub n: u32, // number of visits
-    pub(crate) parent: u32,
-    pub children: Children,
 }
 
-// The scans rely on the hot record spanning half a cache line; fail the
-// build rather than silently regress if the layout grows.
-const _: () = assert!(std::mem::size_of::<Hot>() == 32);
+// The scans rely on the stats record packing eight to a cache line; fail
+// the build rather than silently regress if the layout grows.
+const _: () = assert!(std::mem::size_of::<Stats>() == 8);
 
-impl Hot {
-    pub(crate) fn new(parent: u32) -> Self {
-        Hot {
-            q: 0.0,
-            reward_sum: 0.0,
-            n: 0,
-            parent,
-            children: Children::default(),
-        }
+impl Stats {
+    pub(crate) fn new() -> Self {
+        Stats { q: 0.0, n: 0 }
     }
 }
 
-/// One node of the search tree.
+/// One node of the search tree, minus its statistics.
 ///
-/// `repr(C)` pins the hot record to the leading bytes, so selection and
-/// backpropagation only ever touch the first part of each node while the
-/// game state and action stay in the cold tail.
+/// Everything that selection reads once per level — the child span — sits
+/// in the leading bytes; the game state and action are the cold tail that
+/// only expansion and rollouts touch. Visit statistics live in the arena's
+/// parallel [`Stats`] array.
 #[derive(Debug)]
 #[repr(C)]
 pub struct Node<S: State> {
-    pub hot: Hot,
+    pub children: Children,
+    pub(crate) parent: u32,
     pub state: S,
     pub action: S::Action,
 }
@@ -97,6 +97,5 @@ pub struct NodeRef<'a, S: State> {
     pub parent: Option<usize>,
     pub n: usize,
     pub q: f64,
-    pub reward_sum: f64,
     pub children: Children,
 }

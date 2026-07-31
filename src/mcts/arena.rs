@@ -1,26 +1,32 @@
 use bumpalo::{collections::Vec as BumpVec, Bump};
 
-use crate::mcts::node::{Hot, Node, NodeRef, NO_PARENT};
+use crate::mcts::node::{Node, NodeRef, Stats, NO_PARENT};
 use crate::state::State;
 
-/// The search tree: one flat vector of nodes, related by indices.
+/// The search tree: two parallel flat vectors, related by indices.
 ///
-/// The vector lives in a caller-owned [`Bump`] arena rather than the global
-/// allocator. A fresh tree is built and torn down per search, and
+/// `stats[id]` holds the visit statistics of `nodes[id]`. Splitting them
+/// keeps the statistics dense — eight per cache line — so the UCB scans
+/// and backpropagation walks that dominate the search touch as few lines
+/// as possible, while the game states and actions stay out of their way.
+///
+/// Both vectors live in a caller-owned [`Bump`] arena rather than the
+/// global allocator. A fresh tree is built and torn down per search, and
 /// general-purpose allocators react to that rhythm — glibc in particular
 /// adapts its trim and mmap thresholds to the tree size and ends up
 /// returning the pages to the OS after every search and faulting them back
 /// in on the next one. A bump arena reused across searches sidesteps the
 /// allocator entirely: [`Bump::reset`] keeps the largest chunk, so steady-
-/// state searches perform no allocator or system calls on any platform. The
-/// hot/cold separation lives inside each node, as its [`Hot`] prefix.
+/// state searches perform no allocator or system calls on any platform.
 pub struct Arena<'b, S: State> {
+    pub stats: BumpVec<'b, Stats>,
     pub nodes: BumpVec<'b, Node<S>>,
 }
 
 impl<'b, S: State> Arena<'b, S> {
     pub fn new(bump: &'b Bump) -> Self {
         Arena {
+            stats: BumpVec::new_in(bump),
             nodes: BumpVec::new_in(bump),
         }
     }
@@ -40,8 +46,10 @@ impl<'b, S: State> Arena<'b, S> {
             Some(parent) => u32::try_from(parent).expect("arena id exceeds u32"),
             None => NO_PARENT,
         };
+        self.stats.push(Stats::new());
         self.nodes.push(Node {
-            hot: Hot::new(parent),
+            children: Default::default(),
+            parent,
             state,
             action,
         });
@@ -50,18 +58,18 @@ impl<'b, S: State> Arena<'b, S> {
 
     /// A read-only view of node `id`.
     pub fn get_node(&self, id: usize) -> NodeRef<'_, S> {
+        let stats = &self.stats[id];
         let node = &self.nodes[id];
         NodeRef {
             state: &node.state,
             action: node.action,
-            parent: match node.hot.parent {
+            parent: match node.parent {
                 NO_PARENT => None,
                 parent => Some(parent as usize),
             },
-            n: node.hot.n as usize,
-            q: node.hot.q,
-            reward_sum: node.hot.reward_sum,
-            children: node.hot.children,
+            n: stats.n as usize,
+            q: stats.q as f64,
+            children: node.children,
         }
     }
 }

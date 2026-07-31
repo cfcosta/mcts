@@ -334,8 +334,9 @@ pub fn random_policy<S: State>(seed: u64) -> impl FnMut(&S) -> S::Action {
 /// - the root has no parent and exactly `iterations` visits;
 /// - parent/child links are mutually consistent and the arena contains
 ///   exactly the nodes reachable from the root (no orphans, no sharing);
-/// - `q` is the mean of `reward_sum` over `n` visits, and bounded by the
-///   game's reward range ([-1, 1] for all games used in the tests);
+/// - `q` is bounded by the game's reward range ([-1, 1] for all games used
+///   in the tests; the exact mean semantics are pinned in
+///   `tests/deterministic.rs`);
 /// - unvisited nodes are untouched leaves;
 /// - expansion is all-or-nothing: an expanded node has exactly one child per
 ///   legal action, and terminal nodes are never expanded;
@@ -385,18 +386,7 @@ where
 
     for id in 0..node_count {
         let node = mcts.arena.get_node(id);
-        if node.n > 0 {
-            assert!(
-                (node.q - node.reward_sum / node.n as f64).abs() <= 1e-9,
-                "{ctx}: node {id} has q = {} but reward_sum / n = {}",
-                node.q,
-                node.reward_sum / node.n as f64
-            );
-        } else {
-            assert_eq!(
-                node.reward_sum, 0.0,
-                "{ctx}: unvisited node {id} has a nonzero reward sum"
-            );
+        if node.n == 0 {
             assert_eq!(node.q, 0.0, "{ctx}: unvisited node {id} has a nonzero q");
             assert!(
                 node.children.is_empty(),

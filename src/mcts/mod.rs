@@ -3,7 +3,7 @@ pub mod node;
 
 use crate::state::State;
 use arena::Arena;
-use node::{Children, Node};
+use node::{Children, Stats};
 
 use bumpalo::Bump;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -79,7 +79,7 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
     }
 
     pub fn search(&mut self, n: usize) -> S::Action {
-        let current_visits = self.arena.nodes[self.root_id].hot.n as usize;
+        let current_visits = self.arena.stats[self.root_id].n as usize;
         let cached_visits = current_visits.saturating_add(n);
         let mut inverse_ready = self.inverse_sqrt.len() > cached_visits;
         let mut factors_ready = self.sqrt_log.len() > cached_visits;
@@ -104,7 +104,7 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
             let mut selected_id: usize = self.select(&mut path);
             if !self.arena.nodes[selected_id].state.is_terminal() {
                 self.expand(selected_id, &mut legal_buf);
-                let children = self.arena.nodes[selected_id].hot.children.ids();
+                let children = self.arena.nodes[selected_id].children.ids();
                 if children.len() > 1 {
                     if !inverse_ready {
                         self.extend_inverse_sqrt(cached_visits);
@@ -124,12 +124,11 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
             self.backprop(&path, reward);
         }
         let best_child: usize = self.arena.nodes[self.root_id]
-            .hot
             .children
             .ids()
             .max_by(|&a, &b| {
-                let node_a_score = self.arena.nodes[a].hot.q;
-                let node_b_score = self.arena.nodes[b].hot.q;
+                let node_a_score = self.arena.stats[a].q;
+                let node_b_score = self.arena.stats[b].q;
                 node_a_score.partial_cmp(&node_b_score).unwrap()
             })
             .unwrap();
@@ -155,7 +154,7 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         let mut current: usize = 0;
         loop {
             path.push(current as u32);
-            if self.arena.nodes[current].hot.children.is_empty() {
+            if self.arena.nodes[current].children.is_empty() {
                 return current;
             }
             current = self.get_best_child(current);
@@ -163,20 +162,17 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
     }
 
     fn get_best_child(&self, parent_id: usize) -> usize {
-        let ids = self.arena.nodes[parent_id].hot.children.ids();
+        let ids = self.arena.nodes[parent_id].children.ids();
         let first = ids.start;
         debug_assert!(!ids.is_empty(), "get_best_child called on leaf node");
         if ids.len() == 1 {
             return first;
         }
 
-        let parent_n = self.arena.nodes[parent_id].hot.n as usize;
-        let child_nodes = &self.arena.nodes[ids];
-        if child_nodes.len() >= 8 && child_nodes[0].hot.n == 0 {
-            let offset = child_nodes
-                .iter()
-                .rposition(|child| child.hot.n == 0)
-                .unwrap();
+        let parent_n = self.arena.stats[parent_id].n as usize;
+        let child_stats = &self.arena.stats[ids];
+        if child_stats.len() >= 8 && child_stats[0].n == 0 {
+            let offset = child_stats.iter().rposition(|child| child.n == 0).unwrap();
             return first + offset;
         }
         let parent_factor = if parent_n < self.sqrt_log.len() {
@@ -185,17 +181,17 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
             (parent_n as f64).ln().sqrt()
         };
         let exploration = self.c * parent_factor;
-        let score = |child: &Node<S>| {
-            if child.hot.n == 0 {
+        let score = |child: &Stats| {
+            if child.n == 0 {
                 f64::INFINITY
             } else {
-                child.hot.q + exploration * self.inverse_sqrt[child.hot.n as usize]
+                child.q as f64 + exploration * self.inverse_sqrt[child.n as usize]
             }
         };
         let mut best_offset = 0;
-        let mut best_score = score(&child_nodes[0]);
+        let mut best_score = score(&child_stats[0]);
         let mut offset = 1;
-        let mut pairs = child_nodes[1..].chunks_exact(2);
+        let mut pairs = child_stats[1..].chunks_exact(2);
         for pair in &mut pairs {
             let first_score = score(&pair[0]);
             let second_score = score(&pair[1]);
@@ -233,7 +229,7 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
             }
         }
         let end = self.arena.len();
-        self.arena.nodes[id].hot.children = Children::from_range(first_child, end);
+        self.arena.nodes[id].children = Children::from_range(first_child, end);
     }
 
     fn simulate<R: rand::Rng + ?Sized>(&self, id: usize, rng: &mut R) -> f64 {
@@ -254,12 +250,14 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
     /// leaf-first touches the same nodes in the same order as following
     /// parent links did, but the ids are all known up front, so the stat
     /// updates are independent loads instead of a serial pointer chase.
-    fn backprop(&mut self, path: &[u32], mut reward: f64) {
+    /// Each mean is updated incrementally — `q += (reward - q) / n` is the
+    /// mean of all `n` rewards, with no stored sum.
+    fn backprop(&mut self, path: &[u32], reward: f64) {
+        let mut reward = reward as f32;
         for &id in path.iter().rev() {
-            let hot = &mut self.arena.nodes[id as usize].hot;
-            hot.reward_sum += reward;
-            hot.n += 1;
-            hot.q = hot.reward_sum / hot.n as f64;
+            let stats = &mut self.arena.stats[id as usize];
+            stats.n += 1;
+            stats.q += (reward - stats.q) / stats.n as f32;
             reward = -reward;
         }
     }
