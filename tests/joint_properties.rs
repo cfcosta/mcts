@@ -168,7 +168,7 @@ fn cold_solver_outputs_are_bounded_equilibrium_shaped(tc: TestCase) {
     let iterations: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(256));
 
     let (p, e, value, exploitability) = solve_zero_sum_regret(
-        &payoff, n, &p_priors, &e_priors, &p_legal, &e_legal, iterations,
+        &payoff, n, &p_priors, &e_priors, &p_legal, &e_legal, iterations, false,
     );
 
     assert_distribution(&p, &p_legal, n, "player average");
@@ -192,7 +192,7 @@ fn cold_solver_reports_the_value_and_gap_of_its_own_averages(tc: TestCase) {
     let iterations: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(256));
 
     let (p, e, value, exploitability) = solve_zero_sum_regret(
-        &payoff, n, &p_priors, &e_priors, &p_legal, &e_legal, iterations,
+        &payoff, n, &p_priors, &e_priors, &p_legal, &e_legal, iterations, false,
     );
 
     let expected_value = reference_value(&payoff, n, &p, &e, &p_legal, &e_legal);
@@ -220,7 +220,9 @@ fn cold_solver_single_iteration_average_is_the_normalized_prior(tc: TestCase) {
     let p_priors = draw_priors(&tc, n);
     let e_priors = draw_priors(&tc, n);
 
-    let (p, e, _, _) = solve_zero_sum_regret(&payoff, n, &p_priors, &e_priors, &p_legal, &e_legal, 1);
+    let (p, e, _, _) = solve_zero_sum_regret(
+        &payoff, n, &p_priors, &e_priors, &p_legal, &e_legal, 1, false,
+    );
 
     let expected_p = normalized_prior(&p_priors, &p_legal);
     let expected_e = normalized_prior(&e_priors, &e_legal);
@@ -273,7 +275,7 @@ fn warm_solve_leaves_the_node_internally_coherent(tc: TestCase) {
         let value: f64 = tc.draw(gs::floats::<f64>().min_value(-1.0).max_value(1.0));
         node.record_value(p, e, value);
     }
-    solve_node(node, iterations, false);
+    solve_node(node, iterations, false, false);
 
     let node = tree.node(id);
     assert_distribution(&node.player_policy, &node.player_legal, n, "node player");
@@ -493,6 +495,7 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
             alpha_scale: tc.draw(gs::floats::<f64>().min_value(0.05).max_value(20.0)),
         }),
         average_strategy_policies: tc.draw(gs::booleans()),
+        cfr_plus_solves: tc.draw(gs::booleans()),
         exploration: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.5)),
         chance_resample: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
         convergence_tolerance: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.05)),

@@ -89,6 +89,13 @@ pub struct JointSearchConfig {
     /// recomputed on the averages. `false` (the default) keeps the
     /// Python last-iterate behavior.
     pub average_strategy_policies: bool,
+    /// Opt-in extension: every RM+ solve — warm node solves and the cold
+    /// root equilibrium — runs with CFR+'s accelerations (Tammelin,
+    /// arXiv:1407.5042): alternating regret updates and linearly
+    /// weighted strategy averaging, with warm nodes continuing the
+    /// linear weights globally across batches. `false` (the default)
+    /// keeps the ported simultaneous uniform-average dynamics bitwise.
+    pub cfr_plus_solves: bool,
 }
 
 impl Default for JointSearchConfig {
@@ -115,6 +122,7 @@ impl Default for JointSearchConfig {
             minimum_actions_per_side: 2,
             root_noise: None,
             average_strategy_policies: false,
+            cfr_plus_solves: false,
         }
     }
 }
@@ -284,6 +292,7 @@ mod tests {
         assert_eq!(config.minimum_actions_per_side, 2);
         assert_eq!(config.root_noise, None);
         assert!(!config.average_strategy_policies);
+        assert!(!config.cfr_plus_solves);
 
         // The floor only binds while the cutoff is enabled: existing
         // configs with small action caps stay valid.

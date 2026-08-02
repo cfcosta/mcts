@@ -81,6 +81,22 @@
 //!   reproduces [`solve_zero_sum_regret`](solver::solve_zero_sum_regret)
 //!   bitwise; the root's policy remains the cold root equilibrium either
 //!   way.
+//! - **CFR+-style solves**
+//!   ([`cfr_plus_solves`](config::JointSearchConfig::cfr_plus_solves)):
+//!   every RM+ solve — warm node solves and the cold root equilibrium —
+//!   runs with CFR+'s two accelerations (Tammelin, arXiv:1407.5042):
+//!   alternating updates, where the enemy's regrets are computed against
+//!   the player strategy already refreshed from this iteration's update,
+//!   and linear averaging, where iteration `t` enters the strategy
+//!   average with weight `t` (warm nodes continue the weights globally
+//!   across batches, normalizing by the triangular
+//!   [`strategy_weight_total`](solver::strategy_weight_total)). Both
+//!   accelerations are exact-convergence-preserving refinements of
+//!   regret matching+ that empirically converge much faster than the
+//!   simultaneous uniform-average dynamics, which remain the bitwise
+//!   default. Not covered by the papers in the local corpus; grounded
+//!   directly in Tammelin's CFR+ note and its use in solving
+//!   heads-up limit hold'em (Bowling et al., Science 2015).
 
 pub mod config;
 pub mod node;
@@ -102,5 +118,6 @@ pub use search::SimultaneousTreeSearch;
 pub use solver::{
     argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
     normalized_prior, policy_entropy, sample_index, solve_node, solve_zero_sum_regret,
+    strategy_weight_total,
 };
 pub use traits::{Divergence, Evaluation, Evaluator, JointSnapshot, TransitionProvider};

@@ -120,9 +120,10 @@ fn fresh_node_average_solve_matches_the_cold_solver(tc: TestCase) {
         &node.player_legal.clone(),
         &node.enemy_legal.clone(),
         iterations,
+        false,
     );
 
-    solve_node(node, iterations, true);
+    solve_node(node, iterations, true, false);
 
     let node = tree.node(id);
     assert_eq!(node.solve_count, iterations);
@@ -161,7 +162,7 @@ fn average_solves_install_the_cumulative_average(tc: TestCase) {
         let enemy: usize = tc.draw(gs::sampled_from(node.enemy_legal.clone()));
         let value: f64 = tc.draw(gs::floats::<f64>().min_value(-1.0).max_value(1.0));
         node.record_value(player, enemy, value);
-        solve_node(node, batch, true);
+        solve_node(node, batch, true, false);
     }
 
     let node = tree.node(id);
@@ -220,7 +221,7 @@ fn average_policies_converge_on_matching_pennies() {
     node.record_value(1, 0, -1.0);
     node.record_value(1, 1, 1.0);
     for _ in 0..128 {
-        solve_node(node, 16, true);
+        solve_node(node, 16, true, false);
     }
 
     let node = tree.node(id);

@@ -8,8 +8,8 @@
 use std::collections::VecDeque;
 
 use mcts_rs::joint::{
-    legal_from_priors, truncate_to_prior_mass, Divergence, Evaluation, Evaluator, JointSearchConfig,
-    JointSnapshot, SearchResult, SolverTag, TransitionProvider, Tree,
+    legal_from_priors, strategy_weight_total, truncate_to_prior_mass, Divergence, Evaluation,
+    Evaluator, JointSearchConfig, JointSnapshot, SearchResult, SolverTag, TransitionProvider, Tree,
 };
 
 /// A snapshot with every trait answer stored as plain data.
@@ -323,12 +323,15 @@ impl Evaluator<ToySnapshot> for FixedPriorEvaluator {
 /// - legal lists reconstruct from the snapshot masks and priors (masked,
 ///   deduped, capped, prior-descending order);
 /// - solver state: regrets non-negative and zero off-legal, strategy sums
-///   zero off-legal with total mass tracking the solve count, solves in
-///   whole warm batches, policies full-length distributions over legal
-///   actions, unexpanded nodes fully zeroed, and — under
+///   zero off-legal with total mass tracking the solve count's
+///   `strategy_weight_total` (the plain count, or the triangular number
+///   under `cfr_plus_solves` — which also pins the linear weights
+///   continuing globally across warm batches), solves in whole warm
+///   batches, policies full-length distributions over legal actions,
+///   unexpanded nodes fully zeroed, and — under
 ///   `average_strategy_policies` — every non-root expanded node's policy
-///   is the cumulative `strategy_sum / solve_count` bitwise (the root's
-///   policy is always the cold root equilibrium);
+///   is the cumulative `strategy_sum / strategy_weight_total` bitwise
+///   (the root's policy is always the cold root equilibrium);
 /// - matrix cells: counts bound the outcome lists, unsampled cells keep
 ///   the leaf prefill bitwise, off-grid cells are untouched, terminal
 ///   outcomes are never potential-shaped, and cells that resolve without
@@ -454,10 +457,11 @@ pub fn assert_joint_tree_invariants<S: JointSnapshot>(
                 }
                 strategy_mass += sums[action];
             }
+            let weight_total = strategy_weight_total(config.cfr_plus_solves, node.solve_count);
             assert!(
-                (strategy_mass - f64::from(node.solve_count)).abs() <= 1e-6,
-                "{ctx}: node {index} {side} strategy mass {strategy_mass} must track solve count {}",
-                node.solve_count
+                (strategy_mass - weight_total).abs() <= 1e-9 * weight_total.max(1.0),
+                "{ctx}: node {index} {side} strategy mass {strategy_mass} must track the \
+                 accumulated strategy weight {weight_total}"
             );
             if node.expanded {
                 assert_eq!(policy.len(), n, "{ctx}: node {index} {side} policy length");
@@ -483,7 +487,7 @@ pub fn assert_joint_tree_invariants<S: JointSnapshot>(
                     for &action in legal.iter() {
                         assert_eq!(
                             policy[action].to_bits(),
-                            (sums[action] / f64::from(node.solve_count)).to_bits(),
+                            (sums[action] / weight_total).to_bits(),
                             "{ctx}: node {index} {side} action {action} policy must be \
                              the cumulative average strategy"
                         );

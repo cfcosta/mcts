@@ -56,6 +56,7 @@ fn bench_cold_solve(c: &mut Criterion) {
                 &legal,
                 &legal,
                 2048,
+                false,
             ))
         });
     });
@@ -85,7 +86,7 @@ fn bench_warm_solve(c: &mut Criterion) {
     // Warm solves accumulate on the node between iterations, exactly as
     // repeated learned simulations do on a live root.
     c.bench_function("joint/warm_solve_16_13x13", |b| {
-        b.iter(|| solve_node(black_box(&mut *node), 16, false));
+        b.iter(|| solve_node(black_box(&mut *node), 16, false, false));
     });
 }
 

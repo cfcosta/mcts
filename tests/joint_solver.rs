@@ -11,8 +11,16 @@ use mcts_rs::joint::{normalized_prior, solve_zero_sum_regret};
 #[test]
 fn matching_pennies_solves_to_the_uniform_fixpoint() {
     let payoff = [1.0, -1.0, -1.0, 1.0];
-    let (player, enemy, value, exploitability) =
-        solve_zero_sum_regret(&payoff, 2, &[0.5, 0.5], &[0.5, 0.5], &[0, 1], &[0, 1], 2048);
+    let (player, enemy, value, exploitability) = solve_zero_sum_regret(
+        &payoff,
+        2,
+        &[0.5, 0.5],
+        &[0.5, 0.5],
+        &[0, 1],
+        &[0, 1],
+        2048,
+        false,
+    );
     for probability in player.iter().chain(&enemy) {
         assert!((probability - 0.5).abs() < 1e-12);
     }
@@ -33,7 +41,7 @@ fn rock_paper_scissors_stays_uniform_and_symmetric() {
     let uniform = [1.0 / 3.0; 3];
     let legal = [0, 1, 2];
     let (player, enemy, value, exploitability) =
-        solve_zero_sum_regret(&payoff, 3, &uniform, &uniform, &legal, &legal, 2048);
+        solve_zero_sum_regret(&payoff, 3, &uniform, &uniform, &legal, &legal, 2048, false);
     assert_eq!(player[0].to_bits(), player[1].to_bits());
     assert_eq!(player[1].to_bits(), player[2].to_bits());
     assert_eq!(player, enemy);
@@ -52,8 +60,16 @@ fn rock_paper_scissors_stays_uniform_and_symmetric() {
 fn dominant_actions_absorb_the_average_strategy() {
     // Player row 0 dominates row 1; enemy column 1 dominates column 0.
     let payoff = [2.0, 1.0, 0.0, -1.0];
-    let (player, enemy, value, exploitability) =
-        solve_zero_sum_regret(&payoff, 2, &[0.5, 0.5], &[0.5, 0.5], &[0, 1], &[0, 1], 2048);
+    let (player, enemy, value, exploitability) = solve_zero_sum_regret(
+        &payoff,
+        2,
+        &[0.5, 0.5],
+        &[0.5, 0.5],
+        &[0, 1],
+        &[0, 1],
+        2048,
+        false,
+    );
     assert!(player[0] > 0.99);
     assert!(enemy[1] > 0.99);
     assert!((value - 1.0).abs() < 0.05);
@@ -71,8 +87,16 @@ fn zero_priors_fall_back_to_uniform() {
     assert!((renormalized[1] - 6.0 / 7.0).abs() < 1e-12);
 
     let payoff = [1.0, -1.0, -1.0, 1.0];
-    let (player, _, value, _) =
-        solve_zero_sum_regret(&payoff, 2, &[0.0, 0.0], &[0.0, 0.0], &[0, 1], &[0, 1], 512);
+    let (player, _, value, _) = solve_zero_sum_regret(
+        &payoff,
+        2,
+        &[0.0, 0.0],
+        &[0.0, 0.0],
+        &[0, 1],
+        &[0, 1],
+        512,
+        false,
+    );
     assert!((player[0] - 0.5).abs() < 1e-12);
     assert!(value.abs() < 1e-12);
 }
@@ -89,7 +113,7 @@ fn policies_are_distributions_over_the_legal_subset() {
     ];
     let uniform = [1.0 / 3.0; 3];
     let (player, enemy, value, exploitability) =
-        solve_zero_sum_regret(&payoff, 3, &uniform, &uniform, &[0, 2], &[1], 2048);
+        solve_zero_sum_regret(&payoff, 3, &uniform, &uniform, &[0, 2], &[1], 2048, false);
     assert_eq!(player[1], 0.0);
     assert_eq!(enemy, [0.0, 1.0, 0.0]);
     let player_total: f64 = player.iter().sum();
@@ -110,6 +134,7 @@ fn zero_iterations_panics() {
         &[0, 1],
         &[0, 1],
         0,
+        false,
     );
 }
 
@@ -124,6 +149,7 @@ fn empty_legal_set_panics() {
         &[],
         &[0, 1],
         16,
+        false,
     );
 }
 
@@ -132,8 +158,18 @@ fn empty_legal_set_panics() {
 #[test]
 fn repeat_solves_are_bitwise_identical() {
     let payoff = [0.3, -0.8, -0.5, 0.9];
-    let solve =
-        || solve_zero_sum_regret(&payoff, 2, &[0.7, 0.3], &[0.4, 0.6], &[0, 1], &[0, 1], 2048);
+    let solve = || {
+        solve_zero_sum_regret(
+            &payoff,
+            2,
+            &[0.7, 0.3],
+            &[0.4, 0.6],
+            &[0, 1],
+            &[0, 1],
+            2048,
+            false,
+        )
+    };
     let (player_a, enemy_a, value_a, exploitability_a) = solve();
     let (player_b, enemy_b, value_b, exploitability_b) = solve();
     let bits = |values: &[f64]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();

@@ -23,7 +23,7 @@ use crate::joint::result::{
 use crate::joint::rng::{next_f64, next_index, SplitMix64};
 use crate::joint::solver::{
     argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
-    policy_entropy, sample_index, solve_node, solve_zero_sum_regret,
+    policy_entropy, sample_index, solve_node, solve_zero_sum_regret, strategy_weight_total,
 };
 use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvider};
 
@@ -220,8 +220,11 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         {
             let node = tree.node_mut(root_id);
             node.online_exploitability = node.exploitability;
-            let (player_policy, enemy_policy, value, exploitability) =
-                root_equilibrium(node, self.config.regret_iterations);
+            let (player_policy, enemy_policy, value, exploitability) = root_equilibrium(
+                node,
+                self.config.regret_iterations,
+                self.config.cfr_plus_solves,
+            );
             node.player_policy = player_policy;
             node.enemy_policy = enemy_policy;
             node.root_value = value;
@@ -361,6 +364,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             node,
             self.config.regret_iterations_per_update,
             self.config.average_strategy_policies,
+            self.config.cfr_plus_solves,
         );
         transitions
     }
@@ -534,6 +538,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                 node,
                 self.config.regret_iterations_per_update,
                 self.config.average_strategy_policies,
+                self.config.cfr_plus_solves,
             );
         }
         Ok((value, cost, learned))
@@ -620,14 +625,16 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                         simulations += 1;
                         attempts_without_learning = 0;
                         let node = tree.node(node_id);
+                        let weight_total =
+                            strategy_weight_total(self.config.cfr_plus_solves, node.solve_count);
                         let current_player = average_policy(
                             &node.player_strategy_sum,
-                            node.solve_count,
+                            weight_total,
                             &node.player_policy,
                         );
                         let current_enemy = average_policy(
                             &node.enemy_strategy_sum,
-                            node.solve_count,
+                            weight_total,
                             &node.enemy_policy,
                         );
                         let change = l1_distance(&current_player, &previous_player)
@@ -664,8 +671,11 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         let (player_policy, enemy_policy, final_value, exploitability) = if run.adaptive_deep_selected
         {
             let node = tree.node_mut(node_id);
-            let (player_policy, enemy_policy, value, exploitability) =
-                root_equilibrium(node, self.config.regret_iterations);
+            let (player_policy, enemy_policy, value, exploitability) = root_equilibrium(
+                node,
+                self.config.regret_iterations,
+                self.config.cfr_plus_solves,
+            );
             node.player_policy.clone_from(&player_policy);
             node.enemy_policy.clone_from(&enemy_policy);
             node.root_value = value;
@@ -796,7 +806,11 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
 
 /// The cold equilibrium over a node's accumulated matrix
 /// (`_root_equilibrium`).
-fn root_equilibrium<S>(node: &TreeNode<S>, iterations: u32) -> (Vec<f64>, Vec<f64>, f64, f64) {
+fn root_equilibrium<S>(
+    node: &TreeNode<S>,
+    iterations: u32,
+    cfr_plus: bool,
+) -> (Vec<f64>, Vec<f64>, f64, f64) {
     solve_zero_sum_regret(
         &node.payoff,
         node.action_count(),
@@ -805,6 +819,7 @@ fn root_equilibrium<S>(node: &TreeNode<S>, iterations: u32) -> (Vec<f64>, Vec<f6
         &node.player_legal,
         &node.enemy_legal,
         iterations,
+        cfr_plus,
     )
 }
 

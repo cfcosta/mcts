@@ -36,6 +36,22 @@ pub fn normalized_prior(priors: &[f64], legal: &[usize]) -> Vec<f64> {
 /// exploitability)` where the policies are the **time-average** strategies
 /// scattered to full length, and value/exploitability are recomputed on
 /// those averages (`exploitability = max(M·e) - min(pᵀ·M)`).
+///
+/// With `cfr_plus` (the
+/// [`cfr_plus_solves`](crate::joint::config::JointSearchConfig::cfr_plus_solves)
+/// extension) the iteration body uses CFR+'s two accelerations
+/// (Tammelin, arXiv:1407.5042): **alternating updates** — the enemy's
+/// regrets are updated against the player strategy already refreshed
+/// from this iteration's player-regret update, instead of both sides
+/// updating against the stale pair — and **linear averaging** —
+/// iteration `t` enters the strategy average with weight `t`, so the
+/// average forgets the poor early iterates at a quadratic rate. With
+/// the flag off the ported uniform-average simultaneous dynamics are
+/// reproduced bitwise.
+// The surface mirrors the ported Python signature plus the extension
+// flag; bundling into a params struct would obscure the line-by-line
+// correspondence the characterization tests rely on.
+#[allow(clippy::too_many_arguments)]
 pub fn solve_zero_sum_regret(
     payoff: &[f64],
     action_count: usize,
@@ -44,6 +60,7 @@ pub fn solve_zero_sum_regret(
     player_legal: &[usize],
     enemy_legal: &[usize],
     iterations: u32,
+    cfr_plus: bool,
 ) -> (Vec<f64>, Vec<f64>, f64, f64) {
     assert!(iterations >= 1, "regret iterations must be positive");
     assert!(
@@ -77,34 +94,50 @@ pub fn solve_zero_sum_regret(
     let mut enemy = vec![0.0; enemy_len];
     let mut row_values = vec![0.0; player_len];
     let mut column_values = vec![0.0; enemy_len];
-    for _ in 0..iterations {
+    for iteration in 0..iterations {
         regret_strategy(&player_regrets, &player_prior, &mut player);
         regret_strategy(&enemy_regrets, &enemy_prior, &mut enemy);
+        // Off, the weight is exactly 1.0 and `1.0 * x` is `x` bitwise, so
+        // the ported uniform accumulation is preserved.
+        let weight = if cfr_plus {
+            f64::from(iteration + 1)
+        } else {
+            1.0
+        };
         for (sum, &probability) in player_sum.iter_mut().zip(&player) {
-            *sum += probability;
+            *sum += weight * probability;
         }
         for (sum, &probability) in enemy_sum.iter_mut().zip(&enemy) {
-            *sum += probability;
+            *sum += weight * probability;
         }
         mat_vec(&matrix, enemy_len, &enemy, &mut row_values);
-        vec_mat(&player, &matrix, enemy_len, &mut column_values);
         let current_value = dot(&player, &row_values);
         for (regret, &row_value) in player_regrets.iter_mut().zip(&row_values) {
             *regret = (*regret + row_value - current_value).max(0.0);
         }
+        // Alternation: the enemy responds to the player strategy induced
+        // by the regrets just updated above, not the stale iterate. Off,
+        // the refresh is skipped and `column_values`/`enemy_value` are
+        // bitwise what the ported simultaneous body computed — the
+        // player-regret update above writes `player_regrets`, never
+        // `player`, so moving `vec_mat` below it changes nothing.
+        if cfr_plus {
+            regret_strategy(&player_regrets, &player_prior, &mut player);
+        }
+        vec_mat(&player, &matrix, enemy_len, &mut column_values);
+        let enemy_value = if cfr_plus {
+            dot(&enemy, &column_values)
+        } else {
+            current_value
+        };
         for (regret, &column_value) in enemy_regrets.iter_mut().zip(&column_values) {
-            *regret = (*regret + current_value - column_value).max(0.0);
+            *regret = (*regret + enemy_value - column_value).max(0.0);
         }
     }
 
-    let player_average: Vec<f64> = player_sum
-        .iter()
-        .map(|sum| sum / f64::from(iterations))
-        .collect();
-    let enemy_average: Vec<f64> = enemy_sum
-        .iter()
-        .map(|sum| sum / f64::from(iterations))
-        .collect();
+    let weight_total = strategy_weight_total(cfr_plus, iterations);
+    let player_average: Vec<f64> = player_sum.iter().map(|sum| sum / weight_total).collect();
+    let enemy_average: Vec<f64> = enemy_sum.iter().map(|sum| sum / weight_total).collect();
     let mut player_policy = vec![0.0; action_count];
     let mut enemy_policy = vec![0.0; action_count];
     for (index, &action) in player_legal.iter().enumerate() {
@@ -132,13 +165,27 @@ pub fn solve_zero_sum_regret(
 /// With `average_policies` (the
 /// [`average_strategy_policies`](crate::joint::config::JointSearchConfig::average_strategy_policies)
 /// extension) the installed policy is instead the cumulative time
-/// average `strategy_sum / solve_count` over every solve so far —
-/// including this call's — with value and exploitability recomputed on
-/// the averages exactly as the cold solver does. On a node's first
-/// solve this reproduces [`solve_zero_sum_regret`] bitwise. The solver
-/// state written back (regrets, sums, count) is identical in both
-/// modes; only the installed outputs differ.
-pub fn solve_node<S>(node: &mut TreeNode<S>, iterations: u32, average_policies: bool) {
+/// average `strategy_sum / strategy_weight_total(..)` over every solve
+/// so far — including this call's — with value and exploitability
+/// recomputed on the averages exactly as the cold solver does. On a
+/// node's first solve this reproduces [`solve_zero_sum_regret`]
+/// bitwise. The solver state written back (regrets, sums, count) is
+/// identical in both modes; only the installed outputs differ.
+///
+/// With `cfr_plus` (the
+/// [`cfr_plus_solves`](crate::joint::config::JointSearchConfig::cfr_plus_solves)
+/// extension) the iteration body alternates the regret updates and
+/// weighs strategies linearly, exactly as in the cold solver — see
+/// [`solve_zero_sum_regret`]. The linear weights continue **globally**
+/// across warm batches: a node at `solve_count` S entering a batch
+/// weighs its next iterations `S+1, S+2, …`, so batched solves
+/// accumulate the same weighted sums one long solve would.
+pub fn solve_node<S>(
+    node: &mut TreeNode<S>,
+    iterations: u32,
+    average_policies: bool,
+    cfr_plus: bool,
+) {
     assert!(iterations >= 1, "regret iterations must be positive");
     let action_count = node.action_count();
     let player_len = node.player_legal.len();
@@ -175,23 +222,40 @@ pub fn solve_node<S>(node: &mut TreeNode<S>, iterations: u32, average_policies: 
     let mut enemy = enemy_prior.clone();
     let mut row_values = vec![0.0; player_len];
     let mut column_values = vec![0.0; enemy_len];
-    for _ in 0..iterations {
+    // Linear weights continue where the last batch stopped; on a fresh
+    // node the base is 0.0 and `0.0 + t` is `t` bitwise, which is what
+    // makes the first average-mode solve match the cold solver exactly.
+    let weight_base = f64::from(node.solve_count);
+    for iteration in 0..iterations {
         regret_strategy(&player_regrets, &player_prior, &mut player);
         regret_strategy(&enemy_regrets, &enemy_prior, &mut enemy);
+        let weight = if cfr_plus {
+            weight_base + f64::from(iteration + 1)
+        } else {
+            1.0
+        };
         for (sum, &probability) in player_sum.iter_mut().zip(&player) {
-            *sum += probability;
+            *sum += weight * probability;
         }
         for (sum, &probability) in enemy_sum.iter_mut().zip(&enemy) {
-            *sum += probability;
+            *sum += weight * probability;
         }
         mat_vec(&matrix, enemy_len, &enemy, &mut row_values);
-        vec_mat(&player, &matrix, enemy_len, &mut column_values);
         let current_value = dot(&player, &row_values);
         for (regret, &row_value) in player_regrets.iter_mut().zip(&row_values) {
             *regret = (*regret + row_value - current_value).max(0.0);
         }
+        if cfr_plus {
+            regret_strategy(&player_regrets, &player_prior, &mut player);
+        }
+        vec_mat(&player, &matrix, enemy_len, &mut column_values);
+        let enemy_value = if cfr_plus {
+            dot(&enemy, &column_values)
+        } else {
+            current_value
+        };
         for (regret, &column_value) in enemy_regrets.iter_mut().zip(&column_values) {
-            *regret = (*regret + current_value - column_value).max(0.0);
+            *regret = (*regret + enemy_value - column_value).max(0.0);
         }
     }
 
@@ -208,11 +272,12 @@ pub fn solve_node<S>(node: &mut TreeNode<S>, iterations: u32, average_policies: 
         // Replace the last iterates with the cumulative averages; the
         // shared tail below then installs and evaluates the averages
         // exactly as it would the iterates.
+        let weight_total = strategy_weight_total(cfr_plus, node.solve_count);
         for (index, &action) in node.player_legal.iter().enumerate() {
-            player[index] = node.player_strategy_sum[action] / f64::from(node.solve_count);
+            player[index] = node.player_strategy_sum[action] / weight_total;
         }
         for (index, &action) in node.enemy_legal.iter().enumerate() {
-            enemy[index] = node.enemy_strategy_sum[action] / f64::from(node.solve_count);
+            enemy[index] = node.enemy_strategy_sum[action] / weight_total;
         }
     }
     let mut player_policy = vec![0.0; action_count];
@@ -362,16 +427,32 @@ pub fn policy_entropy(policy: &[f64]) -> f64 {
         .sum::<f64>()
 }
 
+/// The total weight the strategy average accumulated over `solve_count`
+/// RM+ iterations: the plain count under the ported uniform scheme, the
+/// triangular number `S(S+1)/2` under CFR+'s linear weights (iteration
+/// `t` weighs `t`). Exact in f64 for every count below 2²⁶; solver,
+/// search, and the test-side invariant checker all normalize strategy
+/// sums through this one helper.
+pub fn strategy_weight_total(cfr_plus: bool, solve_count: u32) -> f64 {
+    let count = f64::from(solve_count);
+    if cfr_plus {
+        count * (count + 1.0) / 2.0
+    } else {
+        count
+    }
+}
+
 /// The time-average policy of a warm node (`_average_policy`):
-/// `strategy_sum / solves`, or the fallback (the node's last-iterate
-/// policy) before any solve has run.
-pub fn average_policy(strategy_sum: &[f64], solves: u32, fallback: &[f64]) -> Vec<f64> {
-    if solves == 0 {
+/// `strategy_sum / total_weight`, or the fallback (the node's
+/// last-iterate policy) when no weight has accumulated. `total_weight`
+/// is [`strategy_weight_total`] of the node's solve count.
+pub fn average_policy(strategy_sum: &[f64], total_weight: f64, fallback: &[f64]) -> Vec<f64> {
+    if total_weight <= 0.0 {
         return fallback.to_vec();
     }
     strategy_sum
         .iter()
-        .map(|value| value / f64::from(solves))
+        .map(|value| value / total_weight)
         .collect()
 }
 
