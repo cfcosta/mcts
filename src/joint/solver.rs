@@ -128,7 +128,17 @@ pub fn solve_zero_sum_regret(
 /// **last iterate** rather than the time average, and value/exploitability
 /// are computed on that last iterate. The iteration body itself is
 /// identical to the cold solver's.
-pub fn solve_node<S>(node: &mut TreeNode<S>, iterations: u32) {
+///
+/// With `average_policies` (the
+/// [`average_strategy_policies`](crate::joint::config::JointSearchConfig::average_strategy_policies)
+/// extension) the installed policy is instead the cumulative time
+/// average `strategy_sum / solve_count` over every solve so far —
+/// including this call's — with value and exploitability recomputed on
+/// the averages exactly as the cold solver does. On a node's first
+/// solve this reproduces [`solve_zero_sum_regret`] bitwise. The solver
+/// state written back (regrets, sums, count) is identical in both
+/// modes; only the installed outputs differ.
+pub fn solve_node<S>(node: &mut TreeNode<S>, iterations: u32, average_policies: bool) {
     assert!(iterations >= 1, "regret iterations must be positive");
     let action_count = node.action_count();
     let player_len = node.player_legal.len();
@@ -194,6 +204,17 @@ pub fn solve_node<S>(node: &mut TreeNode<S>, iterations: u32) {
         node.enemy_strategy_sum[action] += enemy_sum[index];
     }
     node.solve_count += iterations;
+    if average_policies {
+        // Replace the last iterates with the cumulative averages; the
+        // shared tail below then installs and evaluates the averages
+        // exactly as it would the iterates.
+        for (index, &action) in node.player_legal.iter().enumerate() {
+            player[index] = node.player_strategy_sum[action] / f64::from(node.solve_count);
+        }
+        for (index, &action) in node.enemy_legal.iter().enumerate() {
+            enemy[index] = node.enemy_strategy_sum[action] / f64::from(node.solve_count);
+        }
+    }
     let mut player_policy = vec![0.0; action_count];
     let mut enemy_policy = vec![0.0; action_count];
     for (index, &action) in node.player_legal.iter().enumerate() {

@@ -273,7 +273,7 @@ fn warm_solve_leaves_the_node_internally_coherent(tc: TestCase) {
         let value: f64 = tc.draw(gs::floats::<f64>().min_value(-1.0).max_value(1.0));
         node.record_value(p, e, value);
     }
-    solve_node(node, iterations);
+    solve_node(node, iterations, false);
 
     let node = tree.node(id);
     assert_distribution(&node.player_policy, &node.player_legal, n, "node player");
@@ -492,6 +492,7 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
             epsilon: tc.draw(gs::floats::<f64>().min_value(0.05).max_value(1.0)),
             alpha_scale: tc.draw(gs::floats::<f64>().min_value(0.05).max_value(20.0)),
         }),
+        average_strategy_policies: tc.draw(gs::booleans()),
         exploration: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.5)),
         chance_resample: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
         convergence_tolerance: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.05)),

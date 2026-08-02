@@ -83,6 +83,12 @@ pub struct JointSearchConfig {
     /// priors before the root node is built. `None` (the default) leaves
     /// the evaluator's priors untouched.
     pub root_noise: Option<RootNoise>,
+    /// Opt-in extension: warm node solves install the cumulative
+    /// time-average strategy (`strategy_sum / solve_count`) instead of
+    /// the ported last iterate, with node value and exploitability
+    /// recomputed on the averages. `false` (the default) keeps the
+    /// Python last-iterate behavior.
+    pub average_strategy_policies: bool,
 }
 
 impl Default for JointSearchConfig {
@@ -108,6 +114,7 @@ impl Default for JointSearchConfig {
             prior_mass_cutoff: None,
             minimum_actions_per_side: 2,
             root_noise: None,
+            average_strategy_policies: false,
         }
     }
 }
@@ -276,6 +283,7 @@ mod tests {
         assert_eq!(config.prior_mass_cutoff, None);
         assert_eq!(config.minimum_actions_per_side, 2);
         assert_eq!(config.root_noise, None);
+        assert!(!config.average_strategy_policies);
 
         // The floor only binds while the cutoff is enabled: existing
         // configs with small action caps stay valid.

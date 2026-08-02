@@ -170,7 +170,7 @@ fn outcome_cells_start_empty_and_accumulate() {
 fn warm_solve_on_matching_pennies_is_the_exact_fixpoint() {
     let mut tree = tree_with_root(&[1.0, -1.0, -1.0, 1.0], &[0.5, 0.5], &[0.5, 0.5]);
     let node = tree.node_mut(0);
-    solve_node(node, 16);
+    solve_node(node, 16, false);
     assert_eq!(node.player_policy, [0.5, 0.5]);
     assert_eq!(node.enemy_policy, [0.5, 0.5]);
     assert_eq!(node.root_value, 0.0);
@@ -178,7 +178,7 @@ fn warm_solve_on_matching_pennies_is_the_exact_fixpoint() {
     assert_eq!(node.solve_count, 16);
     assert_eq!(node.player_strategy_sum, [8.0, 8.0]);
     assert_eq!(node.player_regrets, [0.0, 0.0]);
-    solve_node(node, 16);
+    solve_node(node, 16, false);
     assert_eq!(node.solve_count, 32);
     assert_eq!(node.player_strategy_sum, [16.0, 16.0]);
 }
@@ -192,7 +192,7 @@ fn warm_solve_installs_the_last_iterate_not_the_average() {
     // Player row 0 dominates; enemy column 1 dominates.
     let mut tree = tree_with_root(&[2.0, 1.0, 0.0, -1.0], &[0.5, 0.5], &[0.5, 0.5]);
     let node = tree.node_mut(0);
-    solve_node(node, 16);
+    solve_node(node, 16, false);
     assert_eq!(node.player_policy, [1.0, 0.0]);
     assert_eq!(node.enemy_policy, [0.0, 1.0]);
     assert_eq!(node.root_value, 1.0);
@@ -213,11 +213,11 @@ fn warm_solve_installs_the_last_iterate_not_the_average() {
 fn warm_solve_moves_mass_after_a_payoff_flip() {
     let mut tree = tree_with_root(&[2.0, 1.0, 0.0, -1.0], &[0.5, 0.5], &[0.5, 0.5]);
     let node = tree.node_mut(0);
-    solve_node(node, 16);
+    solve_node(node, 16, false);
     assert_eq!(node.player_policy, [1.0, 0.0]);
     // Row 1 now dominates; the flip must overcome the accumulated regret.
     node.payoff.copy_from_slice(&[0.0, -1.0, 2.0, 1.0]);
-    solve_node(node, 16);
+    solve_node(node, 16, false);
     assert_eq!(node.player_policy, [0.0, 1.0]);
     assert_eq!(node.root_value, 1.0);
 }
@@ -229,8 +229,8 @@ fn warm_solves_are_bitwise_deterministic() {
     let mut first = build();
     let mut second = build();
     for _ in 0..3 {
-        solve_node(first.node_mut(0), 16);
-        solve_node(second.node_mut(0), 16);
+        solve_node(first.node_mut(0), 16, false);
+        solve_node(second.node_mut(0), 16, false);
     }
     let (a, b) = (first.root(), second.root());
     let bits = |values: &[f64]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();

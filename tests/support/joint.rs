@@ -325,7 +325,10 @@ impl Evaluator<ToySnapshot> for FixedPriorEvaluator {
 /// - solver state: regrets non-negative and zero off-legal, strategy sums
 ///   zero off-legal with total mass tracking the solve count, solves in
 ///   whole warm batches, policies full-length distributions over legal
-///   actions, and unexpanded nodes fully zeroed;
+///   actions, unexpanded nodes fully zeroed, and — under
+///   `average_strategy_policies` — every non-root expanded node's policy
+///   is the cumulative `strategy_sum / solve_count` bitwise (the root's
+///   policy is always the cold root equilibrium);
 /// - matrix cells: counts bound the outcome lists, unsampled cells keep
 ///   the leaf prefill bitwise, off-grid cells are untouched, terminal
 ///   outcomes are never potential-shaped, and cells that resolve without
@@ -476,6 +479,16 @@ pub fn assert_joint_tree_invariants<S: JointSnapshot>(
                     (policy_mass - 1.0).abs() <= 1e-9,
                     "{ctx}: node {index} {side} policy must sum to one, got {policy_mass}"
                 );
+                if config.average_strategy_policies && index != 0 {
+                    for &action in legal.iter() {
+                        assert_eq!(
+                            policy[action].to_bits(),
+                            (sums[action] / f64::from(node.solve_count)).to_bits(),
+                            "{ctx}: node {index} {side} action {action} policy must be \
+                             the cumulative average strategy"
+                        );
+                    }
+                }
             } else {
                 assert!(
                     policy.is_empty(),

@@ -357,7 +357,11 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         run.possible_joint_pairs += u32::try_from(possible).expect("pair count fits u32");
         run.sampled_joint_pairs += u32::try_from(pairs.len()).expect("pair count fits u32");
         run.chance_outcomes += transitions;
-        solve_node(node, self.config.regret_iterations_per_update);
+        solve_node(
+            node,
+            self.config.regret_iterations_per_update,
+            self.config.average_strategy_policies,
+        );
         transitions
     }
 
@@ -526,7 +530,11 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         if learned {
             let node = tree.node_mut(node_id);
             node.record_value(player_action, enemy_action, value);
-            solve_node(node, self.config.regret_iterations_per_update);
+            solve_node(
+                node,
+                self.config.regret_iterations_per_update,
+                self.config.average_strategy_policies,
+            );
         }
         Ok((value, cost, learned))
     }

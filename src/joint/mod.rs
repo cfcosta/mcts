@@ -69,6 +69,18 @@
 //!   dedicated fourth rng stream appended after the ported three, so the
 //!   selection/chance/budget traces of any seed are unchanged whether or
 //!   not noise is enabled.
+//! - **Average-strategy node policies**
+//!   ([`average_strategy_policies`](config::JointSearchConfig::average_strategy_policies)):
+//!   warm node solves install the cumulative time-average strategy
+//!   `strategy_sum / solve_count` — the quantity regret matching's
+//!   no-regret guarantee actually drives to equilibrium — instead of the
+//!   ported last iterate, which merely cycles around it (the folk
+//!   theorem behind Online Outcome Sampling and CFR-family averaging,
+//!   Lisý et al.). Node value and exploitability are recomputed on the
+//!   averages exactly as the cold solver does, so a node's first solve
+//!   reproduces [`solve_zero_sum_regret`](solver::solve_zero_sum_regret)
+//!   bitwise; the root's policy remains the cold root equilibrium either
+//!   way.
 
 pub mod config;
 pub mod node;
