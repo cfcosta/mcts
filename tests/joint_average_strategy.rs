@@ -387,9 +387,8 @@ fn average_strategy_searches_uphold_every_tree_invariant(tc: TestCase) {
 // Configuration surface.
 // ---------------------------------------------------------------------------
 
-/// The extension defaults to off — the defaults reproduce the ported
-/// Python last-iterate behavior exactly — and a bool has no validation
-/// envelope to reject.
+/// The extension defaults to off — the defaults keep the last-iterate
+/// behavior — and a bool has no validation envelope to reject.
 #[test]
 fn average_strategy_defaults_off_and_validates() {
     let config = JointSearchConfig::default();

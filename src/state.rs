@@ -1,15 +1,28 @@
+//! The game-rules abstraction the UCT search plays through.
+
 use rand::{seq::SliceRandom, Rng};
 
+/// A two-player, alternating-turn game position.
+///
+/// The [`Mcts`](crate::Mcts) search consumes games entirely through this
+/// trait: cloning positions into tree nodes, stepping them by actions,
+/// and scoring finished games. Positions should be cheap to clone —
+/// every rollout starts by copying one.
 pub trait State {
+    /// A move identifier, stored by value in every tree node.
     type Action: Copy;
 
     /// Whether expansion should clone into arena storage before applying
     /// `step_in_place`. The default preserves the original `step` path.
     const IN_PLACE_EXPANSION: bool = false;
+    /// A placeholder action for nodes with no incoming move (the root).
     fn default_action() -> Self::Action;
 
+    /// Whether `player` has won in this position.
     fn player_has_won(&self, player: usize) -> bool;
+    /// Whether the game is over.
     fn is_terminal(&self) -> bool;
+    /// Every legal action in this position.
     fn get_legal_actions(&self) -> Vec<Self::Action>;
 
     /// Appends every legal action to `actions`, without clearing it.
@@ -34,7 +47,9 @@ pub trait State {
             .expect("no legal actions in a non-terminal state")
     }
 
+    /// The player whose turn it is.
     fn to_play(&self) -> usize;
+    /// The position after `action` is played.
     fn step(&self, action: Self::Action) -> Self;
 
     /// Applies an action to reusable state storage.
@@ -64,6 +79,8 @@ pub trait State {
         self.is_terminal().then(|| self.reward(to_play))
     }
 
+    /// The reward of this position from `to_play`'s perspective.
     fn reward(&self, to_play: usize) -> f32;
+    /// Prints the position, for debugging.
     fn render(&self);
 }

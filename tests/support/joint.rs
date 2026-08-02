@@ -357,11 +357,7 @@ pub fn assert_joint_tree_invariants<S: JointSnapshot>(
         result.failure.is_none(),
         "{ctx}: the checker needs a successful result"
     );
-    assert_eq!(
-        result.solver,
-        SolverTag::RmPlusPooledNodeV3,
-        "{ctx}: solver tag"
-    );
+    assert_eq!(result.solver, SolverTag::RmPlus, "{ctx}: solver tag");
     let n = tree.action_count;
 
     // Depths and child linkage via BFS over the children maps.

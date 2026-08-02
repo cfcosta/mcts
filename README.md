@@ -174,9 +174,9 @@ By implementing this trait for your game or decision process, you can integrate 
 
 The `joint` module is a second, independent search for **simultaneous-move
 zero-sum games**: both players commit an action at once, and the outcome may
-depend on hidden chance. It is a port of a Pokémon battle pipeline's search
-and shares nothing with the UCT implementation above — turn order, priors,
-seeded chance, and matrix solves have no representation in the `State` trait.
+depend on hidden chance. It shares nothing with the UCT implementation
+above — turn order, priors, seeded chance, and matrix solves have no
+representation in the `State` trait.
 
 Instead of visit counts and UCB, every tree node carries a dense payoff
 matrix over joint `(player, enemy)` action pairs, filled by chance-sampled
@@ -197,14 +197,13 @@ Integration happens through three traits in `joint::traits`:
   chance seed; may report a `Divergence`, which the search converts into a
   well-formed fallback result instead of panicking.
 - **`Evaluator`**: produces per-side policy priors and a value estimate
-  (typically a neural network in the real pipeline; fixed tables in the
-  tests).
+  (typically a neural network; fixed tables in the tests).
 
 Searches are driven by `joint::SimultaneousTreeSearch`, are fully
 deterministic for a given seed, and return a `SearchResult` with policies,
 sampled or argmax actions, the root payoff matrix, and rich diagnostics.
-See the `src/joint/mod.rs` module documentation for the algorithm details
-and the list of deliberate deviations from the Python source,
+See the `src/joint/mod.rs` module documentation for the algorithm details,
+the determinism contract, and the opt-in extensions,
 `examples/goofspiel.rs` for a complete integration of all three traits on
 a real game, and `benches/joint.rs` (`cargo bench --bench joint`) for
 benchmarks of the solver and end-to-end search hot paths.

@@ -7,7 +7,7 @@
 //! legal action keeps a positive probability of being explored,
 //! including actions the raw priors would dismiss. All draws come from a
 //! dedicated noise stream, so enabling the extension cannot shift any
-//! draw on the ported selection/chance/budget streams.
+//! draw on the core selection/chance/budget streams.
 //!
 //! Unlike those streams, whose draw semantics are frozen to one
 //! `next_u64` per value in [`rng`](crate::joint::rng), the samplers here

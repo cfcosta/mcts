@@ -1,3 +1,5 @@
+//! The bump-allocated tree arena: parallel statistics and node vectors.
+
 use bumpalo::{collections::Vec as BumpVec, Bump};
 
 use crate::mcts::node::{Node, NodeRef, Stats, NO_PARENT};
@@ -19,11 +21,14 @@ use crate::state::State;
 /// allocator entirely: [`Bump::reset`] keeps the largest chunk, so steady-
 /// state searches perform no allocator or system calls on any platform.
 pub struct Arena<'b, S: State> {
+    /// Visit statistics, parallel to `nodes`.
     pub stats: BumpVec<'b, Stats>,
+    /// The nodes, indexed by arena id.
     pub nodes: BumpVec<'b, Node<S>>,
 }
 
 impl<'b, S: State> Arena<'b, S> {
+    /// An empty arena allocating from `bump`.
     pub fn new(bump: &'b Bump) -> Self {
         Arena {
             stats: BumpVec::new_in(bump),
@@ -36,6 +41,7 @@ impl<'b, S: State> Arena<'b, S> {
         self.nodes.len()
     }
 
+    /// Whether the tree has no nodes.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }

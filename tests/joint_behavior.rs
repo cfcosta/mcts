@@ -1,6 +1,6 @@
 //! End-to-end behavior of the root-only joint search on toy matrix games.
 //!
-//! Every expected number is derived by hand from the ported equations:
+//! Every expected number is derived by hand from the search's equations:
 //! regret matching from uniform priors on matching pennies is an exact
 //! fixpoint, and on a dominant-strategy game the pure equilibrium locks
 //! in at iteration 2, leaving exactly half an iteration of prior mass in
@@ -51,7 +51,7 @@ fn root_only_search_solves_the_installed_matrix() {
     assert_eq!(result.root_value, 0.0);
     assert_eq!(result.exploitability, Some(0.0));
     assert_eq!(result.transitions, 4);
-    assert_eq!(result.solver, SolverTag::RmPlusPooledNodeV3);
+    assert_eq!(result.solver, SolverTag::RmPlus);
     assert_eq!(result.payoff_matrix, Some(vec![1.0, -1.0, -1.0, 1.0]));
     assert_eq!(result.payoff_spread, Some(2.0));
     assert_eq!(result.failure, None);
@@ -236,7 +236,7 @@ fn provider_divergence_yields_the_fallback_result() {
     assert_eq!(result.enemy_action, None);
     assert_eq!(result.root_value, 0.25);
     assert_eq!(result.transitions, 3);
-    assert_eq!(result.solver, SolverTag::DivergenceFallbackV1);
+    assert_eq!(result.solver, SolverTag::DivergenceFallback);
     assert_eq!(result.exploitability, None);
     assert_eq!(result.payoff_spread, None);
     assert_eq!(result.payoff_matrix, None);
@@ -619,10 +619,9 @@ fn mid_descent_divergence_discards_the_inflight_cost() {
     // step. The first simulation always resamples (evidence 1), spends
     // that fifth success on a live stage outcome, and then tries to
     // expand the newly created child — whose first step diverges. The
-    // failing simulation's in-flight cost is discarded exactly as in
-    // Python: transitions reports the install only, while the outcome
-    // pushed by the successful fifth step stays counted in
-    // chance_outcomes.
+    // failing simulation's in-flight cost is discarded: transitions
+    // reports the install only, while the outcome pushed by the
+    // successful fifth step stays counted in chance_outcomes.
     let mut provider = DivergeAfter::new(
         TwoStage {
             stage_matrix: vec![1.0, -1.0, -1.0, 1.0],
@@ -649,7 +648,7 @@ fn mid_descent_divergence_discards_the_inflight_cost() {
         SearchOptions::default(),
     );
 
-    assert_eq!(result.solver, SolverTag::DivergenceFallbackV1);
+    assert_eq!(result.solver, SolverTag::DivergenceFallback);
     assert!(result.failure.is_some());
     assert_eq!(result.player_policy, vec![0.0, 0.0]);
     assert_eq!(result.enemy_policy, vec![0.0, 0.0]);

@@ -1,3 +1,6 @@
+//! Classic UCT search: UCB1 selection, uniform random rollouts, and
+//! incremental-mean backpropagation over an arena-allocated tree.
+
 pub mod arena;
 pub mod node;
 
@@ -53,8 +56,14 @@ fn sqrt_log_table(required: usize) -> &'static [f64] {
     })
 }
 
+/// A single-threaded UCT search tree over a [`State`] game.
+///
+/// Build one with [`new`](Self::new), then call [`search`](Self::search)
+/// to run playouts and pick the best root action.
 pub struct Mcts<'b, S: State> {
+    /// The tree's nodes and statistics, exposed for inspection.
     pub arena: Arena<'b, S>,
+    /// Arena id of the root node.
     pub root_id: usize,
     c: f64,
     inverse_sqrt: &'static [f32],
@@ -93,6 +102,12 @@ impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
         }
     }
 
+    /// Runs `n` playouts and returns the root action whose child has the
+    /// highest mean reward.
+    ///
+    /// Each playout selects a leaf by UCB1, expands it unless terminal,
+    /// plays one uniformly random rollout, and backpropagates the
+    /// sign-flipped reward along the descent path.
     pub fn search(&mut self, n: usize) -> S::Action {
         let current_visits = self.arena.stats[self.root_id].n as usize;
         let cached_visits = current_visits.saturating_add(n);

@@ -1,8 +1,7 @@
-//! Search hyper-parameters, mirroring the Python `JointSearchConfig`
-//! dataclass field for field (defaults included). Two fields are
-//! deliberately absent: `inference_batch_size` (a batching concern of the
-//! Python pipeline) and `redundant_action_prior_scale` (pre-search prior
-//! shaping the caller applies before handing priors to the search).
+//! Search hyper-parameters: the core knobs, the opt-in extensions, and
+//! the validation rules that guard them. Prior shaping and evaluation
+//! batching are the caller's concern — priors arrive already shaped
+//! through the evaluator.
 
 use std::fmt;
 
@@ -35,6 +34,12 @@ impl Default for RootNoise {
     }
 }
 
+/// Every knob of the search: the core hyper-parameters plus the opt-in
+/// extensions, which all default to off.
+///
+/// Build one with struct-update syntax over [`Default`]. The rules a
+/// configuration must satisfy live in [`validate`](Self::validate);
+/// `SimultaneousTreeSearch::new` panics on the first violation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JointSearchConfig {
     /// Chance outcomes sampled per joint action pair during expansion.
@@ -85,16 +90,16 @@ pub struct JointSearchConfig {
     pub root_noise: Option<RootNoise>,
     /// Opt-in extension: warm node solves install the cumulative
     /// time-average strategy (`strategy_sum / solve_count`) instead of
-    /// the ported last iterate, with node value and exploitability
-    /// recomputed on the averages. `false` (the default) keeps the
-    /// Python last-iterate behavior.
+    /// the last iterate, with node value and exploitability recomputed
+    /// on the averages. `false` (the default) keeps the last-iterate
+    /// behavior.
     pub average_strategy_policies: bool,
     /// Opt-in extension: every RM+ solve — warm node solves and the cold
     /// root equilibrium — runs with CFR+'s accelerations (Tammelin,
     /// arXiv:1407.5042): alternating regret updates and linearly
     /// weighted strategy averaging, with warm nodes continuing the
     /// linear weights globally across batches. `false` (the default)
-    /// keeps the ported simultaneous uniform-average dynamics bitwise.
+    /// keeps the simultaneous uniform-average dynamics bitwise.
     pub cfr_plus_solves: bool,
     /// Opt-in extension: the cold root equilibria stop early once their
     /// time-average exploitability, checked every
@@ -144,7 +149,9 @@ impl Default for JointSearchConfig {
 /// A config field whose value violates an assumption the search relies on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfigError {
+    /// The offending field's name.
     pub field: &'static str,
+    /// What the field's value must satisfy.
     pub requirement: &'static str,
 }
 
@@ -285,7 +292,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_matches_python_defaults() {
+    fn defaults_are_pinned() {
         let config = JointSearchConfig::default();
         assert_eq!(config.chance_samples_per_joint, 1);
         assert_eq!(config.max_depth, 1);

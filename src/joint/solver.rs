@@ -1,11 +1,9 @@
 //! Regret-matching+ solvers over dense payoff matrices.
 //!
-//! Ports `solve_zero_sum_regret` and `_normalized_prior` from the Python
-//! search. Matrix products accumulate sequentially left-to-right — the
-//! crate's frozen summation order — so results are deterministic here but
-//! not bit-identical to NumPy's pairwise/BLAS accumulation; ported
-//! characterization tests therefore assert with tolerances, never against
-//! Python-produced bit patterns.
+//! The cold solver approximates a matrix equilibrium from scratch; the
+//! warm solver iterates a tree node's persistent regrets in place. Matrix
+//! products accumulate sequentially left-to-right — the crate's frozen
+//! summation order — so every solve is bitwise reproducible.
 
 use rand::RngCore;
 
@@ -58,11 +56,12 @@ fn normalized_prior_into(priors: &[f64], legal: &[usize], out: &mut Vec<f64>) {
 /// updating against the stale pair — and **linear averaging** —
 /// iteration `t` enters the strategy average with weight `t`, so the
 /// average forgets the poor early iterates at a quadratic rate. With
-/// the flag off the ported uniform-average simultaneous dynamics are
-/// reproduced bitwise.
-// The surface mirrors the ported Python signature plus the extension
-// flag; bundling into a params struct would obscure the line-by-line
-// correspondence the characterization tests rely on.
+/// the flag off, both sides update against the stale pair and every
+/// iteration enters the average with weight 1 — the default
+/// simultaneous uniform-average dynamics.
+// The wide surface is deliberate: the characterization tests pin the
+// solver by calling it directly with every input visible; a params
+// struct would only obscure them.
 #[allow(clippy::too_many_arguments)]
 pub fn solve_zero_sum_regret(
     payoff: &[f64],
@@ -164,7 +163,7 @@ pub fn solve_zero_sum_regret_with_tolerance(
         regret_strategy(&player_regrets, &player_prior, &mut player);
         regret_strategy(&enemy_regrets, &enemy_prior, &mut enemy);
         // Off, the weight is exactly 1.0 and `1.0 * x` is `x` bitwise, so
-        // the ported uniform accumulation is preserved.
+        // the uniform accumulation is preserved exactly.
         let weight = if cfr_plus {
             f64::from(iteration + 1)
         } else {
@@ -184,9 +183,9 @@ pub fn solve_zero_sum_regret_with_tolerance(
         // Alternation: the enemy responds to the player strategy induced
         // by the regrets just updated above, not the stale iterate. Off,
         // the refresh is skipped and `column_values`/`enemy_value` are
-        // bitwise what the ported simultaneous body computed — the
-        // player-regret update above writes `player_regrets`, never
-        // `player`, so moving `vec_mat` below it changes nothing.
+        // bitwise what the simultaneous body computes — the player-regret
+        // update above writes `player_regrets`, never `player`, so
+        // moving `vec_mat` below it changes nothing.
         if cfr_plus {
             regret_strategy(&player_regrets, &player_prior, &mut player);
         }
@@ -248,7 +247,7 @@ pub fn solve_zero_sum_regret_with_tolerance(
     )
 }
 
-/// Warm-started RM+ on a node's legal submatrix (`_solve_node`).
+/// Warm-started RM+ on a node's legal submatrix.
 ///
 /// Differs from [`solve_zero_sum_regret`] on every output: regrets carry
 /// over between calls through the node (strategy sums are fresh per call
@@ -364,9 +363,9 @@ pub fn solve_node_with_scratch<S>(
     normalized_prior_into(&node.enemy_priors, &node.enemy_legal, enemy_prior);
     refill_zeroed(player_sum, player_len);
     refill_zeroed(enemy_sum, enemy_len);
-    // Python initializes the iterates to the priors before the loop; with
-    // at least one iteration (asserted above) they are overwritten before
-    // any use, but the mirror keeps the ports diffable line by line.
+    // The iterates start as the priors; with at least one iteration
+    // (asserted above) they are overwritten before any use, so this only
+    // shapes the buffers.
     refill_copy(player, player_prior);
     refill_copy(enemy, enemy_prior);
     refill_zeroed(row_values, player_len);
@@ -447,11 +446,10 @@ pub fn solve_node_with_scratch<S>(
     node.exploitability = max_of(row_values) - min_of(column_values);
 }
 
-/// Draws an index from a probability vector (`_sample`): cumulative scan
-/// returning the first index whose running total reaches the draw, falling
-/// back to the **last** index with positive mass when rounding leaves the
-/// total short. Panics when no entry is positive, as Python's `max` over
-/// an empty generator would.
+/// Draws an index from a probability vector: cumulative scan returning
+/// the first index whose running total reaches the draw, falling back to
+/// the **last** index with positive mass when rounding leaves the total
+/// short. Panics when no entry is positive.
 pub fn sample_index<R: RngCore + ?Sized>(probabilities: &[f64], rng: &mut R) -> usize {
     let threshold = next_f64(rng);
     let mut cumulative = 0.0;
@@ -467,9 +465,9 @@ pub fn sample_index<R: RngCore + ?Sized>(probabilities: &[f64], rng: &mut R) -> 
         .expect("cannot sample from a distribution with no positive mass")
 }
 
-/// The epsilon-mixed descent policy (`_mixed_policy`): the node policy
-/// blended with the renormalized prior over the legal set, with a
-/// visit-decayed epsilon floored at 0.02. Zero outside `legal`.
+/// The epsilon-mixed descent policy: the node policy blended with the
+/// renormalized prior over the legal set, with a visit-decayed epsilon
+/// floored at 0.02. Zero outside `legal`.
 pub fn mixed_policy(
     policy: &[f64],
     priors: &[f64],
@@ -513,9 +511,8 @@ pub fn mixed_policy_into(
 }
 
 /// Probability of sampling a fresh chance outcome for a pair with
-/// `evidence` outcomes already recorded (`_chance_resample_probability`):
-/// certain until the first outcome exists, then `1/√evidence` decaying to
-/// the configured floor.
+/// `evidence` outcomes already recorded: certain until the first outcome
+/// exists, then `1/√evidence` decaying to the configured floor.
 pub fn chance_resample_probability(evidence: u32, floor: f64) -> f64 {
     if evidence < 1 {
         return 1.0;
@@ -523,8 +520,8 @@ pub fn chance_resample_probability(evidence: u32, floor: f64) -> f64 {
     floor.max(1.0 / f64::from(evidence).sqrt())
 }
 
-/// Joint action pairs to expand (`_expansion_pairs`). Full: the whole
-/// legal×legal grid, player-outer, in legal-list order. Partial: diagonal
+/// Joint action pairs to expand. Full: the whole legal×legal grid,
+/// player-outer, in legal-list order. Partial: diagonal
 /// rotations — `max(|P|, |E|)` pairs per rotation, wrapping each side
 /// independently — deduplicated in first-seen order so every player row
 /// and enemy column is covered without the quadratic grid.
@@ -565,9 +562,9 @@ pub fn expansion_pairs(
 }
 
 /// The deterministic action choice: the first legal action achieving the
-/// maximum policy mass, scanning `legal` in order. Mirrors Python's
-/// `max(legal, key=...)`, which keeps the first maximum — and since legal
-/// lists are prior-descending, ties break toward the higher prior.
+/// maximum policy mass, scanning `legal` in order. The first maximum
+/// wins — and since legal lists are prior-descending, ties break toward
+/// the higher prior.
 pub fn argmax_first(policy: &[f64], legal: &[usize]) -> usize {
     assert!(!legal.is_empty(), "cannot take an argmax over no actions");
     let mut best = legal[0];
@@ -581,7 +578,7 @@ pub fn argmax_first(policy: &[f64], legal: &[usize]) -> usize {
     best
 }
 
-/// Natural-log entropy over the positive entries (`_policy_entropy`).
+/// Natural-log entropy over the positive entries.
 pub fn policy_entropy(policy: &[f64]) -> f64 {
     -policy
         .iter()
@@ -594,7 +591,7 @@ pub fn policy_entropy(policy: &[f64]) -> f64 {
 }
 
 /// The total weight the strategy average accumulated over `solve_count`
-/// RM+ iterations: the plain count under the ported uniform scheme, the
+/// RM+ iterations: the plain count under the uniform scheme, the
 /// triangular number `S(S+1)/2` under CFR+'s linear weights (iteration
 /// `t` weighs `t`). Exact in f64 for every count below 2²⁶; solver,
 /// search, and the test-side invariant checker all normalize strategy
@@ -608,10 +605,10 @@ pub fn strategy_weight_total(cfr_plus: bool, solve_count: u32) -> f64 {
     }
 }
 
-/// The time-average policy of a warm node (`_average_policy`):
-/// `strategy_sum / total_weight`, or the fallback (the node's
-/// last-iterate policy) when no weight has accumulated. `total_weight`
-/// is [`strategy_weight_total`] of the node's solve count.
+/// The time-average policy of a warm node: `strategy_sum /
+/// total_weight`, or the fallback (the node's last-iterate policy) when
+/// no weight has accumulated. `total_weight` is
+/// [`strategy_weight_total`] of the node's solve count.
 pub fn average_policy(strategy_sum: &[f64], total_weight: f64, fallback: &[f64]) -> Vec<f64> {
     let mut result = Vec::new();
     average_policy_into(strategy_sum, total_weight, fallback, &mut result);

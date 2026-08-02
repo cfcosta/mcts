@@ -1,6 +1,6 @@
 //! Characterization tests for tree nodes, the warm solver, and the pure
-//! descent helpers, ported from the Python suite. Exact equalities are
-//! asserted only where every intermediate is exactly representable.
+//! descent helpers. Exact equalities are asserted only where every
+//! intermediate is exactly representable.
 
 use mcts_rs::joint::{
     argmax_first, average_policy, chance_resample_probability, expansion_pairs, legal_from_priors,
@@ -58,8 +58,7 @@ fn legal_from_priors_orders_by_prior_then_index_and_caps() {
     assert_eq!(legal_from_priors(0b1111, &priors, 3), [1, 2, 0]);
     assert_eq!(legal_from_priors(0b1111, &priors, 13), [1, 2, 0, 3]);
     assert_eq!(legal_from_priors(0b1010, &priors, 13), [1, 3]);
-    // Mask bits at or above the action count are ignored, mirroring the
-    // Python range(action_count) scan.
+    // Mask bits at or above the action count are ignored.
     assert_eq!(legal_from_priors((1 << 40) | 0b01, &[0.5, 0.5], 13), [0]);
 }
 

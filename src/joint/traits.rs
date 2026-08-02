@@ -1,6 +1,6 @@
 //! The caller-supplied surface of the joint search: positions, the seeded
 //! transition function, and the prior/value evaluator. Together these
-//! replace the Python search's native engine handles and network calls.
+//! keep the game rules and the evaluation model outside the crate.
 
 use std::fmt;
 
@@ -10,8 +10,7 @@ use std::fmt;
 /// [-1, 1] (the search clamps shaped values back into that range).
 pub trait JointSnapshot {
     /// Stable identity used to pool tree nodes: two snapshots with the
-    /// same id are treated as the same position, exactly as the Python
-    /// search keyed nodes by native handle.
+    /// same id are treated as the same position.
     fn id(&self) -> u64;
     /// Bitmask of legal player actions — bit `i` set means action `i` is
     /// legal. Must be non-zero for non-terminal positions.
@@ -35,13 +34,14 @@ pub trait JointSnapshot {
 /// numbers), and reproducibility of the whole search rests on the
 /// provider honoring the seed.
 pub trait TransitionProvider {
+    /// The position type this provider advances.
     type Snapshot: JointSnapshot;
 
     /// Steps `parent` by a joint action, or reports semantic divergence.
     ///
     /// Divergence is the one in-band failure of the search: it aborts the
     /// current search and surfaces as `SearchResult::failure` rather than
-    /// a panic, mirroring the Python `_TreeDivergence` control flow.
+    /// a panic.
     fn step(
         &mut self,
         parent: &Self::Snapshot,
@@ -81,15 +81,16 @@ pub trait Evaluator<S: JointSnapshot> {
 
 /// Provider-reported semantic divergence.
 ///
-/// Python collapsed this to the fixed failure string
-/// `"search-semantic-divergence"`; here the provider's reason is carried
-/// through to `SearchResult::failure`.
+/// The provider's reason text is carried through unchanged to
+/// `SearchResult::failure`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Divergence {
+    /// The provider's explanation of what diverged.
     pub reason: String,
 }
 
 impl Divergence {
+    /// A divergence carrying `reason`.
     pub fn new(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),

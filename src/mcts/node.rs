@@ -1,3 +1,6 @@
+//! Node storage: the id-span child list, the packed per-node visit
+//! statistics, and the node record itself.
+
 use std::{fmt, ops::Range};
 
 use crate::state::State;
@@ -30,10 +33,12 @@ impl Children {
         first..first + self.len as usize
     }
 
+    /// The number of children.
     pub fn len(&self) -> usize {
         self.len as usize
     }
 
+    /// Whether the node has no children yet.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -58,8 +63,10 @@ impl fmt::Debug for Children {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Stats {
-    pub q: f32, // running mean reward
-    pub n: u32, // number of visits
+    /// Running mean reward.
+    pub q: f32,
+    /// Number of visits.
+    pub n: u32,
 }
 
 // The scans rely on the stats record packing eight to a cache line; fail
@@ -81,9 +88,12 @@ impl Stats {
 #[derive(Debug)]
 #[repr(C)]
 pub struct Node<S: State> {
+    /// The node's child span; empty until expansion.
     pub children: Children,
     pub(crate) parent: u32,
+    /// The game position at this node.
     pub state: S,
+    /// The action that led here from the parent.
     pub action: S::Action,
 }
 
@@ -92,10 +102,16 @@ pub struct Node<S: State> {
 /// This is the inspection API for callers and tests; the search itself
 /// accesses the fields directly.
 pub struct NodeRef<'a, S: State> {
+    /// The node's game position.
     pub state: &'a S,
+    /// The action that led here from the parent.
     pub action: S::Action,
+    /// The parent's arena id; `None` for the root.
     pub parent: Option<usize>,
+    /// Visit count.
     pub n: usize,
+    /// Mean reward.
     pub q: f64,
+    /// The node's child span.
     pub children: Children,
 }

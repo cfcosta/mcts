@@ -18,9 +18,8 @@
 //!   provider divergence.
 //!
 //! The exact characterization suites (`joint_solver`, `joint_node`,
-//! `joint_behavior`, `joint_tree_invariants`) pin the ported Python
-//! semantics point-by-point; these properties sweep the input space
-//! around them.
+//! `joint_behavior`, `joint_tree_invariants`) pin the search's semantics
+//! point-by-point; these properties sweep the input space around them.
 
 mod support;
 
@@ -621,7 +620,7 @@ fn divergence_anywhere_degrades_to_the_fallback_shape(tc: TestCase) {
     );
 
     if result.failure.is_some() {
-        assert_eq!(result.solver, SolverTag::DivergenceFallbackV1);
+        assert_eq!(result.solver, SolverTag::DivergenceFallback);
         assert_eq!(result.player_policy, vec![0.0; 2]);
         assert_eq!(result.enemy_policy, vec![0.0; 2]);
         assert_eq!(result.player_action, None);

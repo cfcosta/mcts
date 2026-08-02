@@ -19,6 +19,7 @@ pub struct SplitMix64 {
 }
 
 impl SplitMix64 {
+    /// A stream whose state starts at `seed`.
     pub fn new(seed: u64) -> Self {
         Self { state: seed }
     }
@@ -67,8 +68,8 @@ impl SeedableRng for SplitMix64 {
     }
 }
 
-/// A uniform draw in [0, 1) from the top 53 bits of one `next_u64`, the
-/// float construction CPython's `random.random` also uses.
+/// A uniform draw in [0, 1) from the top 53 bits of one `next_u64` —
+/// the standard 53-bit double construction.
 pub fn next_f64<R: RngCore + ?Sized>(rng: &mut R) -> f64 {
     (rng.next_u64() >> 11) as f64 / 9_007_199_254_740_992.0 // 2^53
 }

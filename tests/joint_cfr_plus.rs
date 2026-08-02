@@ -4,7 +4,7 @@
 //! Property inventory:
 //!
 //! - **Algebraic (bitwise)**: `strategy_weight_total` is the plain count
-//!   under the ported scheme and the exact triangular number `S(S+1)/2`
+//!   under the uniform scheme and the exact triangular number `S(S+1)/2`
 //!   under CFR+ — checked against an independent integer oracle. Every
 //!   average in the implementation and in the invariant checker
 //!   normalizes through this one helper.
@@ -23,7 +23,7 @@
 //! - **Convergence**: on matching pennies and rock-paper-scissors from
 //!   skewed priors the weighted average reaches the mixed equilibrium,
 //!   and on the fixed pennies instance CFR+ ends at least as close to
-//!   equilibrium as the ported simultaneous dynamics — the deterministic
+//!   equilibrium as the default simultaneous dynamics — the deterministic
 //!   witness of the faster-convergence claim motivating the extension.
 //! - **Structural (end-to-end)**: searches with the flag on — stacked
 //!   with every other extension — uphold all tree invariants, and same
@@ -116,7 +116,7 @@ fn matching_pennies() -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<usize>) {
 // The weight schedule.
 // ---------------------------------------------------------------------------
 
-/// Algebraic oracle: the ported scheme weighs every iteration 1 (total =
+/// Algebraic oracle: the uniform scheme weighs every iteration 1 (total =
 /// solve count) and CFR+ weighs iteration `t` by `t` (total = the
 /// triangular number), computed here independently in exact integer
 /// arithmetic. Both must match bitwise — solver, checker, and search all
@@ -157,7 +157,7 @@ fn one_iteration_solves_coincide_across_variants(tc: TestCase) {
     let player_legal = legal_from_priors(draw_mask(&tc, n), &player_priors, cap);
     let enemy_legal = legal_from_priors(draw_mask(&tc, n), &enemy_priors, cap);
 
-    let ported = solve_zero_sum_regret(
+    let uniform = solve_zero_sum_regret(
         &payoff,
         n,
         &player_priors,
@@ -178,10 +178,10 @@ fn one_iteration_solves_coincide_across_variants(tc: TestCase) {
         true,
     );
 
-    assert_eq!(bits(&ported.0), bits(&cfr_plus.0), "player policy");
-    assert_eq!(bits(&ported.1), bits(&cfr_plus.1), "enemy policy");
-    assert_eq!(ported.2.to_bits(), cfr_plus.2.to_bits(), "value");
-    assert_eq!(ported.3.to_bits(), cfr_plus.3.to_bits(), "exploitability");
+    assert_eq!(bits(&uniform.0), bits(&cfr_plus.0), "player policy");
+    assert_eq!(bits(&uniform.1), bits(&cfr_plus.1), "enemy policy");
+    assert_eq!(uniform.2.to_bits(), cfr_plus.2.to_bits(), "value");
+    assert_eq!(uniform.3.to_bits(), cfr_plus.3.to_bits(), "exploitability");
 }
 
 /// Differential oracle: a 1x1 legal grid is a fixpoint of both dynamics
@@ -210,13 +210,13 @@ fn single_legal_pair_solves_are_variant_invariant(tc: TestCase) {
             cfr_plus,
         )
     };
-    let ported = solve(false);
+    let uniform = solve(false);
     let cfr_plus = solve(true);
 
-    assert_eq!(bits(&ported.0), bits(&cfr_plus.0), "player policy");
-    assert_eq!(bits(&ported.1), bits(&cfr_plus.1), "enemy policy");
-    assert_eq!(ported.2.to_bits(), cfr_plus.2.to_bits(), "value");
-    assert_eq!(ported.3.to_bits(), cfr_plus.3.to_bits(), "exploitability");
+    assert_eq!(bits(&uniform.0), bits(&cfr_plus.0), "player policy");
+    assert_eq!(bits(&uniform.1), bits(&cfr_plus.1), "enemy policy");
+    assert_eq!(uniform.2.to_bits(), cfr_plus.2.to_bits(), "value");
+    assert_eq!(uniform.3.to_bits(), cfr_plus.3.to_bits(), "exploitability");
     assert_eq!(cfr_plus.0[player_action], 1.0, "lone player action");
     assert_eq!(cfr_plus.1[enemy_action], 1.0, "lone enemy action");
     let cell = payoff[player_action * n + enemy_action];
@@ -334,7 +334,7 @@ fn cfr_plus_average_solves_install_the_cumulative_weighted_average(tc: TestCase)
 /// Convergence anchor and the extension's deterministic optimality
 /// witness: from skewed priors on matching pennies, 2048 CFR+ iterations
 /// land the weighted average inside 0.05 of the (1/2, 1/2) equilibrium,
-/// and no farther from it than the ported simultaneous uniform average —
+/// and no farther from it than the default simultaneous uniform average —
 /// the faster-convergence claim, checked on a fixed instance.
 #[test]
 fn cfr_plus_converges_on_matching_pennies_at_least_as_fast() {
@@ -351,7 +351,7 @@ fn cfr_plus_converges_on_matching_pennies_at_least_as_fast() {
             cfr_plus,
         )
     };
-    let ported = solve(false);
+    let uniform = solve(false);
     let cfr_plus = solve(true);
 
     for (side, policy) in [("player", &cfr_plus.0), ("enemy", &cfr_plus.1)] {
@@ -373,10 +373,10 @@ fn cfr_plus_converges_on_matching_pennies_at_least_as_fast() {
         cfr_plus.3
     );
     assert!(
-        cfr_plus.3 <= ported.3,
-        "CFR+ gap {} must not exceed the ported gap {}",
+        cfr_plus.3 <= uniform.3,
+        "CFR+ gap {} must not exceed the uniform-average gap {}",
         cfr_plus.3,
-        ported.3
+        uniform.3
     );
 }
 
@@ -520,9 +520,9 @@ fn cfr_plus_searches_are_bitwise_deterministic() {
 // Configuration surface.
 // ---------------------------------------------------------------------------
 
-/// The extension defaults to off — the defaults reproduce the ported
-/// simultaneous uniform-average dynamics exactly — and a bool has no
-/// validation envelope to reject.
+/// The extension defaults to off — the defaults keep the uniform-average
+/// simultaneous dynamics — and a bool has no validation envelope to
+/// reject.
 #[test]
 fn cfr_plus_defaults_off_and_validates() {
     let config = JointSearchConfig::default();

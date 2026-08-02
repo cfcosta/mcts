@@ -4,8 +4,8 @@
 //!   fixed cost of every search call.
 //! - `joint/warm_solve_16_13x13`: the incremental node solve paid once
 //!   per learned simulation.
-//! - `joint/root_only_13`: an end-to-end root-only search at the
-//!   pipeline's real action count (169-cell install plus equilibrium).
+//! - `joint/root_only_13`: an end-to-end root-only search at the default
+//!   action cap of 13 per side (169-cell install plus equilibrium).
 //! - `joint/deep_two_stage_budget_320`: an end-to-end deep search at the
 //!   default transition budget, exercising descent, resampling, and the
 //!   convergence machinery.

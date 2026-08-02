@@ -1,7 +1,7 @@
-//! Characterization tests for the cold RM+ solver, ported from the Python
-//! suite. Exact equalities are asserted only where every intermediate is
-//! exactly representable; accumulated quantities use tolerances because
-//! this port sums sequentially while NumPy sums pairwise.
+//! Characterization tests for the cold RM+ solver. Exact equalities are
+//! asserted only where every intermediate is exactly representable;
+//! accumulated quantities are checked against mathematical anchors with
+//! tolerances.
 
 use hegel::{generators as gs, TestCase};
 use mcts_rs::joint::{

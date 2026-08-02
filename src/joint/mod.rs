@@ -1,53 +1,41 @@
 //! Simultaneous-move regret-matching tree search.
 //!
-//! A port of the Pokémon battle pipeline's joint search: both players act
-//! at once, every tree node carries a dense payoff matrix over joint
-//! (player, enemy) actions filled by chance-sampled outcomes, nodes are
-//! solved with warm-started regret matching+, and the root policy comes
-//! from a cold RM+ equilibrium over the accumulated root matrix.
+//! Both players act at once: every tree node carries a dense payoff
+//! matrix over joint (player, enemy) actions filled by chance-sampled
+//! outcomes, nodes are solved with warm-started regret matching+, and
+//! the root policy comes from a cold RM+ equilibrium over the
+//! accumulated root matrix. The game rules and the evaluation model
+//! stay behind the [`TransitionProvider`] and [`Evaluator`] traits, so
+//! any two-player zero-sum simultaneous-move game can plug in.
 //!
 //! This module is a sibling of the classic [`crate::Mcts`] UCT search —
 //! the two share nothing: joint actions, priors, seeded chance, and
 //! matrix solves have no representation in the [`crate::State`] trait.
 //!
-//! # Deviations from the Python implementation
+//! # Determinism
 //!
-//! The port is algorithm-equivalent, not bit-exact. Every equation,
-//! control-flow branch, draw order, and RNG stream assignment matches the
-//! Python source, but the following differ deliberately:
+//! A seed reproduces a search bit for bit. Three [`SplitMix64`] streams
+//! (selection, chance, budget) are derived from the one seed, every
+//! draw is served by a fixed stream in a fixed order, and the draw
+//! semantics are frozen in [`rng`]: floats take the top 53 bits of one
+//! `next_u64`, bounded indices use a widening multiply, and chance
+//! seeds are full `u64` draws. Matrix products accumulate sequentially
+//! left-to-right. Nothing about the environment — platform, allocator,
+//! thread timing — enters any result.
 //!
-//! - **RNG.** Python uses three `random.Random` (Mersenne Twister)
-//!   instances; this port derives matching [`SplitMix64`] streams from
-//!   one seed. Seeds therefore do not reproduce Python runs. The draw
-//!   semantics are frozen in [`rng`]: floats take the top 53 bits of one
-//!   `next_u64`, and bounded indices use a widening multiply — neither
-//!   matches CPython's `random()` or `randrange` internals.
-//! - **Chance seeds** are full `u64` draws; Python uses
-//!   `getrandbits(63)`.
-//! - **Naming.** The Python result field `nodes` is
-//!   [`SearchResult::transitions`](result::SearchResult::transitions),
-//!   which is what it counts.
-//! - **Config.** `inference_batch_size` (a batching concern of the
-//!   subprocess protocol) and `redundant_action_prior_scale` (pre-search
-//!   prior shaping done by the caller) are dropped.
-//! - **Diagnostics.** Node-pool and evaluation-cache hit counters are
-//!   dropped: this engine neither pools nor caches.
-//! - **Divergence accounting.** On a root-install divergence,
-//!   `transitions` counts the steps actually attempted including the
-//!   failing one; Python reports the whole pooled batch. A mid-descent
-//!   divergence carries the provider's reason text (Python raises fixed
-//!   messages) and discards the in-flight simulation's cost, exactly as
-//!   Python does.
-//! - **Errors.** Caller contract violations (invalid config, terminal
-//!   root, empty legal masks, wrong prior lengths) panic; only provider
-//!   divergence is reported in-band via
-//!   [`SearchResult::failure`](result::SearchResult::failure).
+//! # Errors
+//!
+//! Caller contract violations (invalid config, terminal root, empty
+//! legal masks, wrong prior lengths, zero solver iterations) panic;
+//! only provider divergence is reported in-band, via
+//! [`SearchResult::failure`](result::SearchResult::failure) on the
+//! documented fallback result.
 //!
 //! # Opt-in extensions
 //!
-//! Beyond the port, the config carries extensions that default to off
-//! (the defaults reproduce the Python behavior exactly) and are grounded
-//! in the MCTS literature:
+//! The config carries extensions that default to off (the defaults are
+//! the search's frozen baseline dynamics) and are grounded in the
+//! game-search literature:
 //!
 //! - **Prior-mass action pruning**
 //!   ([`prior_mass_cutoff`](config::JointSearchConfig::prior_mass_cutoff) +
@@ -66,21 +54,20 @@
 //!   AlphaZero's root exploration noise (Silver et al.,
 //!   arXiv:1712.01815), which keeps every root action explorable even
 //!   when the evaluator's priors dismiss it. The draws come from a
-//!   dedicated fourth rng stream appended after the ported three, so the
-//!   selection/chance/budget traces of any seed are unchanged whether or
-//!   not noise is enabled.
+//!   dedicated fourth rng stream appended after the three core streams,
+//!   so the selection/chance/budget traces of any seed are unchanged
+//!   whether or not noise is enabled.
 //! - **Average-strategy node policies**
 //!   ([`average_strategy_policies`](config::JointSearchConfig::average_strategy_policies)):
 //!   warm node solves install the cumulative time-average strategy
 //!   `strategy_sum / solve_count` — the quantity regret matching's
 //!   no-regret guarantee actually drives to equilibrium — instead of the
-//!   ported last iterate, which merely cycles around it (the folk
+//!   default last iterate, which merely cycles around it (the folk
 //!   theorem behind Online Outcome Sampling and CFR-family averaging,
 //!   Lisý et al.). Node value and exploitability are recomputed on the
 //!   averages exactly as the cold solver does, so a node's first solve
-//!   reproduces [`solve_zero_sum_regret`](solver::solve_zero_sum_regret)
-//!   bitwise; the root's policy remains the cold root equilibrium either
-//!   way.
+//!   reproduces [`solve_zero_sum_regret`] bitwise; the root's policy
+//!   remains the cold root equilibrium either way.
 //! - **CFR+-style solves**
 //!   ([`cfr_plus_solves`](config::JointSearchConfig::cfr_plus_solves)):
 //!   every RM+ solve — warm node solves and the cold root equilibrium —
@@ -90,29 +77,27 @@
 //!   and linear averaging, where iteration `t` enters the strategy
 //!   average with weight `t` (warm nodes continue the weights globally
 //!   across batches, normalizing by the triangular
-//!   [`strategy_weight_total`](solver::strategy_weight_total)). Both
+//!   [`strategy_weight_total`]). Both
 //!   accelerations are exact-convergence-preserving refinements of
 //!   regret matching+ that empirically converge much faster than the
 //!   simultaneous uniform-average dynamics, which remain the bitwise
-//!   default. Not covered by the papers in the local corpus; grounded
-//!   directly in Tammelin's CFR+ note and its use in solving
-//!   heads-up limit hold'em (Bowling et al., Science 2015).
+//!   default — the dynamics that solved heads-up limit hold'em
+//!   (Bowling et al., Science 2015).
 //! - **Early-terminated root equilibria**
 //!   ([`equilibrium_tolerance`](config::JointSearchConfig::equilibrium_tolerance)):
 //!   the cold root equilibria check their time-average exploitability
-//!   every [`EQUILIBRIUM_CHECK_INTERVAL`](solver::EQUILIBRIUM_CHECK_INTERVAL)
-//!   iterations and stop at the first checkpoint at or under the
+//!   every [`EQUILIBRIUM_CHECK_INTERVAL`] iterations and stop at the
+//!   first checkpoint at or under the
 //!   tolerance — solving to a target exploitability rather than a fixed
 //!   iteration count, the stopping rule under which CFR+ was deployed
-//!   (regret matching's exploitability bound decays as `O(1/√T)`, so
-//!   surplus iterations past the target are pure cost). A stopped solve
-//!   is bit-identical to truncating the fixed-iteration solve at that
-//!   checkpoint, and the performed count is surfaced in
+//!   against heads-up limit hold'em (Tammelin, arXiv:1407.5042;
+//!   Bowling et al., Science 2015). Regret matching's exploitability
+//!   bound decays as `O(1/√T)`, so surplus iterations past the target
+//!   are pure cost. A stopped solve is bit-identical to truncating the
+//!   fixed-iteration solve at that checkpoint, and the performed count
+//!   is surfaced in
 //!   [`RootDiagnostics::equilibrium_iterations`](result::RootDiagnostics::equilibrium_iterations).
-//!   `None` keeps the full ported run bitwise. Not covered by the
-//!   papers in the local corpus; grounded directly in Tammelin's CFR+
-//!   note (arXiv:1407.5042) and the target-exploitability solve of
-//!   heads-up limit hold'em (Bowling et al., Science 2015).
+//!   `None` always runs the full `regret_iterations`, untouched.
 
 pub mod config;
 pub mod node;

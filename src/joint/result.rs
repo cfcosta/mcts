@@ -1,25 +1,25 @@
 //! The search's output surface: the result struct, its diagnostics, and
-//! the tag enums whose `as_str` forms reproduce the Python search's
-//! diagnostic strings verbatim.
+//! the string-tag enums that label how a result was produced.
 
 use std::fmt;
 
 use super::traits::Divergence;
 
-/// Which solver produced a result — the Python `SearchResult.solver` tags.
+/// Which solver produced a [`SearchResult`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SolverTag {
     /// The full RM+ matrix-tree search completed.
-    RmPlusPooledNodeV3,
+    RmPlus,
     /// The provider diverged and the result is the prior-based fallback.
-    DivergenceFallbackV1,
+    DivergenceFallback,
 }
 
 impl SolverTag {
+    /// The stable diagnostic string for this tag.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::RmPlusPooledNodeV3 => "simultaneous-matrix-tree-rmplus-pooled-node-v3",
-            Self::DivergenceFallbackV1 => "rmplus-unavailable-on-semantic-divergence-v1",
+            Self::RmPlus => "simultaneous-matrix-tree-rmplus",
+            Self::DivergenceFallback => "rmplus-unavailable-on-semantic-divergence",
         }
     }
 }
@@ -50,6 +50,7 @@ pub enum AdaptiveReason {
 }
 
 impl AdaptiveReason {
+    /// The stable diagnostic string for this reason.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Disabled => "adaptive-disabled",
@@ -76,11 +77,13 @@ impl fmt::Display for AdaptiveReason {
 
 /// Per-search knobs that are not configuration: whether to sample the
 /// final actions (vs argmax) and the learned router score for adaptive
-/// routing (Python's pooled budget head; 1.0 — always deep-eligible —
-/// when absent).
+/// routing (from an external routing model when one exists; 1.0 —
+/// always deep-eligible — when absent).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SearchOptions {
+    /// Sample the final actions from the policies instead of argmax.
     pub sample_actions: bool,
+    /// The learned router score consumed by adaptive routing.
     pub router_score: f64,
 }
 
@@ -111,12 +114,10 @@ pub struct RootDiagnostics {
     pub equilibrium_iterations: u32,
 }
 
-/// The Python diagnostics dict as a typed struct. Pipeline-side entries
-/// (inference batching, caching, pooling waves) have no equivalent here
-/// and are dropped.
+/// Tree-level counters and routing telemetry for one search.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostics {
-    /// Nodes expanded (Python `tree_nodes`).
+    /// Nodes expanded.
     pub tree_nodes: u32,
     /// Descent simulations that learned something.
     pub tree_simulations: u32,
@@ -139,24 +140,28 @@ pub struct Diagnostics {
     /// Whether the argmax action changed on either side.
     pub deep_action_changed: bool,
     /// Deep-search verdict for router training; `None` when the search
-    /// stayed shallow (Python's -1 sentinel).
+    /// stayed shallow.
     pub deep_search_needed: Option<bool>,
+    /// Root-node diagnostics; `None` on divergence fallback.
     pub root: Option<RootDiagnostics>,
 }
 
-/// The search's answer, mirroring the Python `SearchResult` (with `nodes`
-/// renamed `transitions` — it counts provider `step` calls).
+/// The search's answer: final policies, chosen actions, and diagnostics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     /// Final player policy over the full action space (zeroed on failure).
     pub player_policy: Vec<f64>,
+    /// Final enemy policy over the full action space (zeroed on failure).
     pub enemy_policy: Vec<f64>,
-    /// Chosen actions; `None` on failure.
+    /// Chosen player action; `None` on failure.
     pub player_action: Option<usize>,
+    /// Chosen enemy action; `None` on failure.
     pub enemy_action: Option<usize>,
+    /// The root's game value in the player's view.
     pub root_value: f64,
-    /// Provider transitions consumed (Python `nodes`).
+    /// Provider `step` transitions consumed.
     pub transitions: u32,
+    /// Which solver produced this result.
     pub solver: SolverTag,
     /// Exploitability of the final root policy; `None` on failure.
     pub exploitability: Option<f64>,
@@ -165,6 +170,7 @@ pub struct SearchResult {
     /// The root payoff matrix, `action_count`² row-major; `None` on
     /// failure.
     pub payoff_matrix: Option<Vec<f64>>,
+    /// Tree-level counters and routing telemetry.
     pub diagnostics: Diagnostics,
     /// The provider's divergence when the search fell back, else `None`.
     pub failure: Option<Divergence>,

@@ -1,16 +1,12 @@
-//! The search driver: root installation, descent, and the equilibrium
-//! pipeline.
+//! The search driver: root installation, descent, and equilibria.
 //!
-//! This is the engine half of the port — the single-root path of the
-//! Python `search`/`search_many` plus `_expansion_spec`,
-//! `_install_expansion`, `_simulate_frontier`, `_choose_adaptive_depth`
-//! and `_finish_root_frontier`: evaluate the root, install the full
-//! joint grid under common random numbers, warm-solve it, overwrite the
-//! node with the cold equilibrium, route deep or shallow, run the
-//! budget-gated descent loop on the deep path, and assemble the result.
-//! The descent loop stops early when the root's time-average policies
-//! hold still long enough to count as converged, or when 64 consecutive
-//! simulations fail to learn anything.
+//! One [`SimultaneousTreeSearch::search`] call runs the whole sequence:
+//! evaluate the root, install the full joint grid under common random
+//! numbers, warm-solve it, overwrite the node with the cold equilibrium,
+//! route deep or shallow, run the budget-gated descent loop on the deep
+//! path, and assemble the result. The descent loop stops early when the
+//! root's time-average policies hold still long enough to count as
+//! converged, or when 64 consecutive simulations fail to learn anything.
 
 use rand::RngCore;
 
@@ -30,23 +26,21 @@ use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvi
 
 /// The simultaneous-move regret-matching tree search.
 ///
-/// Holds the configuration and the three independent random streams the
-/// Python search keeps as separate `random.Random` instances: `selection`
-/// (descent sampling and final action draws), `chance` (transition
-/// seeds), and `budget` (the forced-calibration coin of the adaptive
-/// router). Which stream serves each draw, and the order of draws within
-/// a stream, are part of the ported semantics; the streams themselves are
-/// [`SplitMix64`] rather than CPython's Mersenne Twister, so seeds do not
-/// reproduce Python runs — only Rust runs.
+/// Holds the configuration and three independent random streams:
+/// `selection` (descent sampling and final action draws), `chance`
+/// (transition seeds), and `budget` (the forced-calibration coin of the
+/// adaptive router). Which stream serves each draw, and the order of
+/// draws within a stream, are frozen: they are part of the determinism
+/// contract, so a seed reproduces a search bit for bit.
 ///
-/// A fourth stream, `noise`, has no Python counterpart: it feeds the
-/// opt-in Dirichlet root-noise extension exclusively, so enabling noise
-/// never shifts a draw on the ported streams.
+/// A fourth stream, `noise`, feeds the opt-in Dirichlet root-noise
+/// extension exclusively, so enabling noise never shifts a draw on the
+/// three core streams.
 ///
-/// The search object carries no per-call state: every [`search`] call is
-/// the Python pattern of a fresh search object reusing persistent RNGs.
-/// It does carry reusable working memory — the solver scratch and the
-/// two mixed-policy buffers — but their contents never shape behavior:
+/// The search object carries no per-call state: every [`search`] call
+/// starts from a fresh tree while the streams persist across calls. It
+/// does carry reusable working memory — the solver scratch and the two
+/// mixed-policy buffers — but their contents never shape behavior:
 /// every use overwrites them before reading, so reuse is bitwise
 /// invisible.
 ///
@@ -63,9 +57,8 @@ pub struct SimultaneousTreeSearch<R: RngCore = SplitMix64> {
     enemy_mix: Vec<f64>,
 }
 
-/// Per-search bookkeeping: the Python search object's counters and
-/// adaptive verdicts, reset for every root exactly as the pipeline
-/// constructs a fresh search per episode turn.
+/// Per-search bookkeeping: expansion counters and adaptive verdicts,
+/// reset for every root.
 struct SearchRun {
     expanded_nodes: u32,
     chance_outcomes: u32,
@@ -117,9 +110,9 @@ struct DriveContext<'a, P, E> {
 
 impl SimultaneousTreeSearch<SplitMix64> {
     /// Creates a search with four [`SplitMix64`] streams derived from one
-    /// seed. The noise stream is drawn after the three ported streams, so
-    /// their per-seed traces are identical to builds that predate it.
-    /// Panics when the configuration is invalid.
+    /// seed. The noise stream's seed is drawn after the three core
+    /// streams', so their per-seed traces do not depend on whether noise
+    /// is enabled. Panics when the configuration is invalid.
     pub fn new(config: JointSearchConfig, seed: u64) -> Self {
         let mut seeder = SplitMix64::new(seed);
         let selection_rng = SplitMix64::new(seeder.next_u64());
@@ -131,9 +124,9 @@ impl SimultaneousTreeSearch<SplitMix64> {
 }
 
 impl<R: RngCore> SimultaneousTreeSearch<R> {
-    /// Creates a search from explicit random streams, mirroring how the
-    /// pipeline threads per-episode RNGs into each fresh search object.
-    /// Panics when the configuration is invalid.
+    /// Creates a search from explicit random streams, for callers that
+    /// manage stream state themselves. Panics when the configuration is
+    /// invalid.
     pub fn with_rngs(
         config: JointSearchConfig,
         selection_rng: R,
@@ -156,6 +149,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         }
     }
 
+    /// The configuration this search was built with.
     pub fn config(&self) -> &JointSearchConfig {
         &self.config
     }
@@ -167,7 +161,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     /// handles into the caller's state.
     ///
     /// Panics when `root` is terminal — searching a finished position is
-    /// a caller error, exactly as in Python.
+    /// a caller error.
     pub fn search<P, E>(
         &mut self,
         provider: &mut P,
@@ -249,8 +243,8 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             node.exploitability = exploitability;
             run.equilibrium_iterations = performed;
         }
-        // Python records 1.0 for non-adaptive searches regardless of the
-        // caller's score (the pooled router only scores adaptive roots).
+        // Non-adaptive searches record 1.0 regardless of the caller's
+        // score: the router score only routes adaptive roots.
         let router_score = if self.config.adaptive_search {
             options.router_score
         } else {
@@ -264,15 +258,13 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         (result, tree)
     }
 
-    /// Expands a node over its joint grid (`_expand_frontier`): the full
-    /// legal grid for the budget-exempt root install, diagonal rotations
-    /// for nodes reached by descent. One chance seed per sample index is
-    /// drawn from the chance stream and shared across every pair — common
-    /// random numbers. On divergence, returns the failing step's error and
-    /// the number of step calls made; the root reports that count while
-    /// descent discards it, matching Python, which loses in-flight descent
-    /// cost but reports the whole pooled root batch (the root-side count
-    /// is a documented deviation).
+    /// Expands a node over its joint grid: the full legal grid for the
+    /// budget-exempt root install, diagonal rotations for nodes reached
+    /// by descent. One chance seed per sample index is drawn from the
+    /// chance stream and shared across every pair — common random
+    /// numbers. On divergence, returns the failing step's error and the
+    /// number of step calls made; the root reports that count in the
+    /// fallback result while descent discards its in-flight cost.
     fn expand_node<P, E>(
         &mut self,
         run: &mut SearchRun,
@@ -296,7 +288,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             let seeds: Vec<u64> = (0..self.config.chance_samples_per_joint)
                 .map(|_| self.chance_rng.next_u64())
                 .collect();
-            // Pair-major, sample-minor: the Python request order.
+            // Pair-major, sample-minor: the frozen request order.
             pairs
                 .iter()
                 .flat_map(|&(player, enemy)| seeds.iter().map(move |&seed| (player, enemy, seed)))
@@ -315,8 +307,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             }
         }
         // Terminal successors keep their raw return; only live successors
-        // consult the evaluator (Python substitutes `terminal_return`
-        // centrally in `_pooled_successor_values`).
+        // consult the evaluator.
         let leaf_values: Vec<f64> = successors
             .iter()
             .map(|successor| match successor.terminal_value() {
@@ -327,11 +318,11 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         Ok(self.install_expansion(run, tree, node_id, &samples, successors, &leaf_values))
     }
 
-    /// Installs stepped-and-evaluated outcomes into a node
-    /// (`_install_expansion`): shape each leaf value by the potential
-    /// difference (terminal outcomes are never shaped **or clamped**),
-    /// record it into the running-mean payoff, then warm-solve the node.
-    /// Returns the number of outcomes installed — the transition count.
+    /// Installs stepped-and-evaluated outcomes into a node: shape each
+    /// leaf value by the potential difference (terminal outcomes are
+    /// never shaped **or clamped**), record it into the running-mean
+    /// payoff, then warm-solve the node. Returns the number of outcomes
+    /// installed — the transition count.
     fn install_expansion<S: JointSnapshot>(
         &mut self,
         run: &mut SearchRun,
@@ -344,7 +335,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         assert_eq!(samples.len(), successors.len(), "one successor per sample");
         assert_eq!(samples.len(), leaf_values.len(), "one value per sample");
         let transitions = u32::try_from(successors.len()).expect("transition count fits u32");
-        // Order-preserving dedup, mirroring Python's dict.fromkeys.
+        // Order-preserving dedup: first occurrence keeps its position.
         let mut pairs: Vec<(usize, usize)> = Vec::new();
         for &(player, enemy, _) in samples {
             if !pairs.contains(&(player, enemy)) {
@@ -389,7 +380,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         transitions
     }
 
-    /// The transition cost of expanding a node partially (`_joint_cost`).
+    /// The transition cost of expanding a node partially.
     fn joint_cost<S>(&self, node: &TreeNode<S>) -> u32 {
         let pairs = expansion_pairs(
             &node.player_legal,
@@ -401,11 +392,11 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             * self.config.chance_samples_per_joint
     }
 
-    /// One descent from a node (`_simulate_frontier`): sample a joint
-    /// action from the epsilon-mixed policies, take a fresh or reused
-    /// chance outcome, resolve its value terminally, at the depth cap, or
-    /// through the child node, and when the outcome taught us something,
-    /// re-record it and warm-solve the node on the way out. Returns
+    /// One descent from a node: sample a joint action from the
+    /// epsilon-mixed policies, take a fresh or reused chance outcome,
+    /// resolve its value terminally, at the depth cap, or through the
+    /// child node, and when the outcome taught us something, re-record
+    /// it and warm-solve the node on the way out. Returns
     /// `(value, cost, learned)`; `cost` counts provider transitions.
     fn simulate<P, E>(
         &mut self,
@@ -457,15 +448,15 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         if evidence == 0 && remaining == 0 {
             return Ok((tree.node(node_id).root_value, 0, false));
         }
-        // Python's short-circuit order: no resample coin is drawn for an
-        // unseen pair or an exhausted budget.
+        // Short-circuit order: no resample coin is drawn for an unseen
+        // pair or an exhausted budget.
         let fresh = evidence == 0
             || (remaining > 0
                 && next_f64(&mut self.selection_rng)
                     < chance_resample_probability(evidence, self.config.chance_resample));
         let outcome_index = if fresh {
-            // `_new_chance_outcome_frontier`: one fresh chance seed, one
-            // step, one evaluation, appended to the pair's outcome cell.
+            // A fresh outcome: one fresh chance seed, one step, one
+            // evaluation, appended to the pair's outcome cell.
             let seed = self.chance_rng.next_u64();
             let successor = ctx.provider.step(
                 &tree.node(node_id).snapshot,
@@ -569,9 +560,9 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         Ok((value, cost, learned))
     }
 
-    /// The deep/shallow routing predicate chain (`_choose_adaptive_depth`),
-    /// in Python's exact order. The budget stream is drawn at most once,
-    /// and only when every earlier predicate falls through.
+    /// The deep/shallow routing predicate chain, evaluated in a fixed
+    /// order. The budget stream is drawn at most once, and only when
+    /// every earlier predicate falls through.
     fn choose_adaptive_depth<S>(&mut self, node: &TreeNode<S>, router_score: f64) -> AdaptiveReason {
         if !self.config.adaptive_search {
             return AdaptiveReason::Disabled;
@@ -596,10 +587,10 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         AdaptiveReason::RouterStableRoot
     }
 
-    /// The root driver (`_finish_root_frontier`): on the deep path, run
-    /// budget-gated descents from the root, then let a final cold
-    /// equilibrium overwrite the node and become the result; on the
-    /// shallow path the initial equilibrium is the result untouched.
+    /// The root driver: on the deep path, run budget-gated descents from
+    /// the root, then let a final cold equilibrium overwrite the node
+    /// and become the result; on the shallow path the initial
+    /// equilibrium is the result untouched.
     /// A deep path whose descents learned nothing skips the final
     /// re-solve: the root matrix is untouched since the initial
     /// equilibrium, so the re-solve would recompute the installed
@@ -614,8 +605,8 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     /// Change diagnostics are computed on both paths, the deep-search
     /// verdict only on the deep one. A divergence raised mid-descent
     /// abandons the tree's learning and returns the fallback, with the
-    /// diverging simulation's in-flight cost excluded from `transitions`
-    /// exactly as in Python.
+    /// diverging simulation's in-flight cost excluded from
+    /// `transitions`.
     fn finish_root<P, E>(
         &mut self,
         run: &mut SearchRun,
@@ -690,8 +681,8 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                         }
                     } else {
                         attempts_without_learning += 1;
-                        // Hardcoded in Python: give up on a root whose
-                        // reachable frontier has stopped producing updates.
+                        // Give up on a root whose reachable frontier has
+                        // stopped producing updates.
                         if attempts_without_learning >= 64 {
                             break;
                         }
@@ -772,7 +763,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             enemy_action: Some(enemy_action),
             root_value: final_value,
             transitions,
-            solver: SolverTag::RmPlusPooledNodeV3,
+            solver: SolverTag::RmPlus,
             exploitability: Some(exploitability),
             payoff_spread: Some(max_payoff - min_payoff),
             payoff_matrix: Some(node.payoff.clone()),
@@ -820,8 +811,8 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         }
     }
 
-    /// The divergence fallback (`_fallback`): zeroed policies, no actions,
-    /// the prior value, and diagnostics without a root section.
+    /// The divergence fallback: zeroed policies, no actions, the prior
+    /// value, and diagnostics without a root section.
     fn fallback(
         &self,
         run: &SearchRun,
@@ -837,7 +828,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             enemy_action: None,
             root_value: run.prior_value,
             transitions,
-            solver: SolverTag::DivergenceFallbackV1,
+            solver: SolverTag::DivergenceFallback,
             exploitability: None,
             payoff_spread: None,
             payoff_matrix: None,
@@ -847,9 +838,9 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     }
 }
 
-/// The cold equilibrium over a node's accumulated matrix
-/// (`_root_equilibrium`); the fifth returned element is the iteration
-/// count actually performed under the opt-in tolerance.
+/// The cold equilibrium over a node's accumulated matrix; the fifth
+/// returned element is the iteration count actually performed under the
+/// opt-in tolerance.
 fn root_equilibrium<S>(
     node: &TreeNode<S>,
     iterations: u32,
