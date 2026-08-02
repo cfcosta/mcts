@@ -470,6 +470,8 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
     };
     let n = spec.action_count();
     let expansion_budget: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(24));
+    let max_actions_per_side: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(13));
+    let prune: bool = tc.draw(gs::booleans());
     let config = JointSearchConfig {
         expansion_budget,
         minimum_expansion_budget: tc.draw(gs::integers::<u32>().min_value(1).max_value(24)),
@@ -478,7 +480,13 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
         regret_iterations: tc.draw(gs::integers::<u32>().min_value(8).max_value(128)),
         regret_iterations_per_update: tc.draw(gs::integers::<u32>().min_value(1).max_value(32)),
         deeper_joint_rotations: tc.draw(gs::integers::<usize>().min_value(1).max_value(3)),
-        max_actions_per_side: tc.draw(gs::integers::<usize>().min_value(1).max_value(13)),
+        max_actions_per_side,
+        prior_mass_cutoff: prune.then(|| tc.draw(gs::floats::<f64>().min_value(0.05).max_value(1.0))),
+        minimum_actions_per_side: tc.draw(
+            gs::integers::<usize>()
+                .min_value(1)
+                .max_value(max_actions_per_side),
+        ),
         exploration: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.5)),
         chance_resample: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
         convergence_tolerance: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.05)),

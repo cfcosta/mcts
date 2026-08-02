@@ -8,8 +8,8 @@
 use std::collections::VecDeque;
 
 use mcts_rs::joint::{
-    legal_from_priors, Divergence, Evaluation, Evaluator, JointSearchConfig, JointSnapshot,
-    SearchResult, SolverTag, TransitionProvider, Tree,
+    legal_from_priors, truncate_to_prior_mass, Divergence, Evaluation, Evaluator, JointSearchConfig,
+    JointSnapshot, SearchResult, SolverTag, TransitionProvider, Tree,
 };
 
 /// A snapshot with every trait answer stored as plain data.
@@ -413,9 +413,17 @@ pub fn assert_joint_tree_invariants<S: JointSnapshot>(
                 &node.enemy_policy,
             ),
         ] {
+            let mut expected_legal = legal_from_priors(mask, priors, config.max_actions_per_side);
+            if let Some(cutoff) = config.prior_mass_cutoff {
+                truncate_to_prior_mass(
+                    &mut expected_legal,
+                    priors,
+                    cutoff,
+                    config.minimum_actions_per_side,
+                );
+            }
             assert_eq!(
-                *legal,
-                legal_from_priors(mask, priors, config.max_actions_per_side),
+                *legal, expected_legal,
                 "{ctx}: node {index} {side} legal actions reconstruct from the mask and priors"
             );
             assert_eq!(priors.len(), n, "{ctx}: node {index} {side} prior length");

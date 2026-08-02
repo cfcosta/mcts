@@ -42,6 +42,23 @@
 //!   root, empty legal masks, wrong prior lengths) panic; only provider
 //!   divergence is reported in-band via
 //!   [`SearchResult::failure`](result::SearchResult::failure).
+//!
+//! # Opt-in extensions
+//!
+//! Beyond the port, the config carries extensions that default to off
+//! (the defaults reproduce the Python behavior exactly) and are grounded
+//! in the MCTS literature:
+//!
+//! - **Prior-mass action pruning**
+//!   ([`prior_mass_cutoff`](config::JointSearchConfig::prior_mass_cutoff) +
+//!   [`minimum_actions_per_side`](config::JointSearchConfig::minimum_actions_per_side)):
+//!   every node's legal lists keep only the highest-prior prefix holding
+//!   the configured share of raw prior mass. RM+ solve cost grows with
+//!   the payoff-matrix area, and policy-guided action reduction is the
+//!   standard lever against joint-action blowup (Świechowski et al.,
+//!   arXiv:2103.04931 — "Action Reduction"); production AlphaZero-style
+//!   engines restrict simultaneous-move nodes to the top ~99.5% of
+//!   cumulative prior mass.
 
 pub mod config;
 pub mod node;
@@ -52,7 +69,7 @@ pub mod solver;
 pub mod traits;
 
 pub use config::{ConfigError, JointSearchConfig};
-pub use node::{legal_from_priors, NodeId, Outcome, Tree, TreeNode};
+pub use node::{legal_from_priors, truncate_to_prior_mass, NodeId, Outcome, Tree, TreeNode};
 pub use result::{
     AdaptiveReason, Diagnostics, RootDiagnostics, SearchOptions, SearchResult, SolverTag,
 };

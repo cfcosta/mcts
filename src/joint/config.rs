@@ -43,6 +43,13 @@ pub struct JointSearchConfig {
     /// Root payoff spread at or above which (with enough policy entropy)
     /// the search goes deep.
     pub adaptive_payoff_spread_threshold: f64,
+    /// Opt-in extension: keep only each side's highest-prior prefix
+    /// holding this share of the raw prior mass. `None` (the default)
+    /// disables the cutoff and keeps the full capped legal lists.
+    pub prior_mass_cutoff: Option<f64>,
+    /// Fewest actions per side the mass cutoff may keep; consulted only
+    /// when `prior_mass_cutoff` is set.
+    pub minimum_actions_per_side: usize,
 }
 
 impl Default for JointSearchConfig {
@@ -65,6 +72,8 @@ impl Default for JointSearchConfig {
             adaptive_force_deep_fraction: 0.10,
             adaptive_exploitability_threshold: 0.08,
             adaptive_payoff_spread_threshold: 0.75,
+            prior_mass_cutoff: None,
+            minimum_actions_per_side: 2,
         }
     }
 }
@@ -163,6 +172,25 @@ impl JointSearchConfig {
             self.adaptive_payoff_spread_threshold,
             "adaptive_payoff_spread_threshold",
         )?;
+
+        if let Some(cutoff) = self.prior_mass_cutoff {
+            if !(cutoff.is_finite() && cutoff > 0.0 && cutoff <= 1.0) {
+                return Err(ConfigError {
+                    field: "prior_mass_cutoff",
+                    requirement: "within (0, 1]",
+                });
+            }
+            positive(
+                self.minimum_actions_per_side >= 1,
+                "minimum_actions_per_side",
+            )?;
+            if self.minimum_actions_per_side > self.max_actions_per_side {
+                return Err(ConfigError {
+                    field: "minimum_actions_per_side",
+                    requirement: "at most max_actions_per_side",
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -194,11 +222,26 @@ mod tests {
         assert_eq!(config.validate(), Ok(()));
     }
 
+    #[test]
+    fn extensions_default_off_and_skip_their_validation() {
+        let config = JointSearchConfig::default();
+        assert_eq!(config.prior_mass_cutoff, None);
+        assert_eq!(config.minimum_actions_per_side, 2);
+
+        // The floor only binds while the cutoff is enabled: existing
+        // configs with small action caps stay valid.
+        let unpruned = JointSearchConfig {
+            max_actions_per_side: 1,
+            ..JointSearchConfig::default()
+        };
+        assert_eq!(unpruned.validate(), Ok(()));
+    }
+
     type Mutation = fn(&mut JointSearchConfig);
 
     #[test]
     fn validate_reports_the_offending_field() {
-        let cases: [(&str, Mutation); 15] = [
+        let cases: [(&str, Mutation); 19] = [
             ("chance_samples_per_joint", |c| {
                 c.chance_samples_per_joint = 0
             }),
@@ -227,6 +270,18 @@ mod tests {
             }),
             ("adaptive_payoff_spread_threshold", |c| {
                 c.adaptive_payoff_spread_threshold = f64::NEG_INFINITY
+            }),
+            ("prior_mass_cutoff", |c| c.prior_mass_cutoff = Some(0.0)),
+            ("prior_mass_cutoff", |c| {
+                c.prior_mass_cutoff = Some(f64::NAN)
+            }),
+            ("minimum_actions_per_side", |c| {
+                c.prior_mass_cutoff = Some(0.5);
+                c.minimum_actions_per_side = 0;
+            }),
+            ("minimum_actions_per_side", |c| {
+                c.prior_mass_cutoff = Some(0.5);
+                c.minimum_actions_per_side = c.max_actions_per_side + 1;
             }),
         ];
         for (field, mutate) in cases {

@@ -128,6 +128,57 @@ pub fn legal_from_priors(mask: u64, priors: &[f64], max_actions_per_side: usize)
     actions
 }
 
+/// Truncates a prior-descending action list (as produced by
+/// [`legal_from_priors`]) to the smallest prefix holding at least
+/// `cutoff` of the list's total raw prior mass, never below `floor`
+/// actions (clamped to the list length). A non-positive total counts
+/// every action as equal mass, mirroring the uniform fallback of
+/// [`normalized_prior`](crate::joint::normalized_prior).
+///
+/// Cumulative and total mass are summed in the same order, so a cutoff
+/// of 1.0 keeps every positive-prior action exactly — but drops
+/// zero-prior actions, the one difference from disabling the cutoff.
+pub fn truncate_to_prior_mass(actions: &mut Vec<usize>, priors: &[f64], cutoff: f64, floor: usize) {
+    let len = actions.len();
+    if len == 0 {
+        return;
+    }
+    let total: f64 = actions.iter().map(|&action| priors[action]).sum();
+    let mut keep = len;
+    if total > 0.0 {
+        let target = cutoff * total;
+        let mut cumulative = 0.0;
+        for (index, &action) in actions.iter().enumerate() {
+            cumulative += priors[action];
+            if cumulative >= target {
+                keep = index + 1;
+                break;
+            }
+        }
+    } else {
+        let target = cutoff * len as f64;
+        keep = (1..=len)
+            .find(|&count| count as f64 >= target)
+            .unwrap_or(len);
+    }
+    actions.truncate(keep.max(floor.min(len)));
+}
+
+/// One side's final legal list under `config`: prior-ordered, capped,
+/// and mass-truncated when the pruning extension is enabled.
+fn restricted_legal(mask: u64, priors: &[f64], config: &JointSearchConfig) -> Vec<usize> {
+    let mut actions = legal_from_priors(mask, priors, config.max_actions_per_side);
+    if let Some(cutoff) = config.prior_mass_cutoff {
+        truncate_to_prior_mass(
+            &mut actions,
+            priors,
+            cutoff,
+            config.minimum_actions_per_side,
+        );
+    }
+    actions
+}
+
 /// A search tree: nodes in creation order, the root first.
 #[derive(Debug)]
 pub struct Tree<S> {
@@ -163,16 +214,9 @@ impl<S: JointSnapshot> Tree<S> {
         let n = self.action_count;
         assert_eq!(evaluation.player_priors.len(), n, "player prior length");
         assert_eq!(evaluation.enemy_priors.len(), n, "enemy prior length");
-        let player_legal = legal_from_priors(
-            snapshot.player_mask(),
-            &evaluation.player_priors,
-            config.max_actions_per_side,
-        );
-        let enemy_legal = legal_from_priors(
-            snapshot.enemy_mask(),
-            &evaluation.enemy_priors,
-            config.max_actions_per_side,
-        );
+        let player_legal =
+            restricted_legal(snapshot.player_mask(), &evaluation.player_priors, config);
+        let enemy_legal = restricted_legal(snapshot.enemy_mask(), &evaluation.enemy_priors, config);
         assert!(
             !player_legal.is_empty() && !enemy_legal.is_empty(),
             "a tree node needs at least one legal action per side"
