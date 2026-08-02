@@ -116,8 +116,8 @@ pub use result::{
 pub use rng::SplitMix64;
 pub use search::SimultaneousTreeSearch;
 pub use solver::{
-    argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
-    normalized_prior, policy_entropy, sample_index, solve_node, solve_zero_sum_regret,
-    strategy_weight_total,
+    argmax_first, average_policy, average_policy_into, chance_resample_probability, expansion_pairs,
+    mixed_policy, mixed_policy_into, normalized_prior, policy_entropy, sample_index, solve_node,
+    solve_node_with_scratch, solve_zero_sum_regret, strategy_weight_total, SolveScratch,
 };
 pub use traits::{Divergence, Evaluation, Evaluator, JointSnapshot, TransitionProvider};

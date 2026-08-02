@@ -15,16 +15,28 @@ use crate::joint::rng::next_f64;
 /// Renormalizes `priors` over the `legal` subset, compact and ordered as
 /// `legal`; uniform when no prior mass survives.
 pub fn normalized_prior(priors: &[f64], legal: &[usize]) -> Vec<f64> {
+    let mut prior = Vec::new();
+    normalized_prior_into(priors, legal, &mut prior);
+    prior
+}
+
+/// [`normalized_prior`] into a caller-held buffer: one exact allocation
+/// when the buffer is too small, none once it is warm. Both branches
+/// renormalize the gathered entries in place, so a mass-free prior costs
+/// no extra buffer.
+fn normalized_prior_into(priors: &[f64], legal: &[usize], out: &mut Vec<f64>) {
     assert!(
         !legal.is_empty(),
         "cannot normalize over an empty legal set"
     );
-    let values: Vec<f64> = legal.iter().map(|&action| priors[action]).collect();
-    let total: f64 = values.iter().sum();
+    refill_gather(out, priors, legal);
+    let total: f64 = out.iter().sum();
     if total > 0.0 {
-        values.into_iter().map(|value| value / total).collect()
+        for value in out.iter_mut() {
+            *value /= total;
+        }
     } else {
-        vec![1.0 / legal.len() as f64; legal.len()]
+        out.fill(1.0 / legal.len() as f64);
     }
 }
 
@@ -180,11 +192,59 @@ pub fn solve_zero_sum_regret(
 /// across warm batches: a node at `solve_count` S entering a batch
 /// weighs its next iterations `S+1, S+2, …`, so batched solves
 /// accumulate the same weighted sums one long solve would.
+///
+/// This is [`solve_node_with_scratch`] over a fresh [`SolveScratch`];
+/// callers solving many nodes should hold a scratch and call the
+/// threaded form directly.
 pub fn solve_node<S>(
     node: &mut TreeNode<S>,
     iterations: u32,
     average_policies: bool,
     cfr_plus: bool,
+) {
+    solve_node_with_scratch(
+        node,
+        iterations,
+        average_policies,
+        cfr_plus,
+        &mut SolveScratch::default(),
+    );
+}
+
+/// Reusable working memory for [`solve_node_with_scratch`]: the eleven
+/// legal-shaped buffers a node solve fills and discards. A fresh scratch
+/// is empty; each buffer grows exactly to the largest shape it has
+/// served and is then rewritten in place, so a scratch threaded through
+/// many solves makes every solve after the first allocation-free. The
+/// contents carry no information between solves — every solve overwrites
+/// every buffer before reading it.
+#[derive(Debug, Default)]
+pub struct SolveScratch {
+    matrix: Vec<f64>,
+    player_regrets: Vec<f64>,
+    enemy_regrets: Vec<f64>,
+    player_prior: Vec<f64>,
+    enemy_prior: Vec<f64>,
+    player_sum: Vec<f64>,
+    enemy_sum: Vec<f64>,
+    player: Vec<f64>,
+    enemy: Vec<f64>,
+    row_values: Vec<f64>,
+    column_values: Vec<f64>,
+}
+
+/// [`solve_node`] over caller-held working memory: bitwise the same
+/// solve, with the intermediates borrowed from `scratch` instead of
+/// freshly allocated, and the node's installed policies rewritten in
+/// place after their first install. The search engine threads one
+/// scratch through every solve it performs, which reduces a deep
+/// search's per-solve allocator traffic to nothing.
+pub fn solve_node_with_scratch<S>(
+    node: &mut TreeNode<S>,
+    iterations: u32,
+    average_policies: bool,
+    cfr_plus: bool,
+    scratch: &mut SolveScratch,
 ) {
     assert!(iterations >= 1, "regret iterations must be positive");
     let action_count = node.action_count();
@@ -195,66 +255,72 @@ pub fn solve_node<S>(
         "each side needs at least one legal action"
     );
 
-    let mut matrix = Vec::with_capacity(player_len * enemy_len);
-    for &player in &node.player_legal {
-        for &enemy in &node.enemy_legal {
-            matrix.push(node.payoff[player * action_count + enemy]);
+    let SolveScratch {
+        matrix,
+        player_regrets,
+        enemy_regrets,
+        player_prior,
+        enemy_prior,
+        player_sum,
+        enemy_sum,
+        player,
+        enemy,
+        row_values,
+        column_values,
+    } = scratch;
+    matrix.clear();
+    matrix.reserve_exact(player_len * enemy_len);
+    for &player_action in &node.player_legal {
+        for &enemy_action in &node.enemy_legal {
+            matrix.push(node.payoff[player_action * action_count + enemy_action]);
         }
     }
-    let mut player_regrets: Vec<f64> = node
-        .player_legal
-        .iter()
-        .map(|&action| node.player_regrets[action])
-        .collect();
-    let mut enemy_regrets: Vec<f64> = node
-        .enemy_legal
-        .iter()
-        .map(|&action| node.enemy_regrets[action])
-        .collect();
-    let player_prior = normalized_prior(&node.player_priors, &node.player_legal);
-    let enemy_prior = normalized_prior(&node.enemy_priors, &node.enemy_legal);
-    let mut player_sum = vec![0.0; player_len];
-    let mut enemy_sum = vec![0.0; enemy_len];
+    refill_gather(player_regrets, &node.player_regrets, &node.player_legal);
+    refill_gather(enemy_regrets, &node.enemy_regrets, &node.enemy_legal);
+    normalized_prior_into(&node.player_priors, &node.player_legal, player_prior);
+    normalized_prior_into(&node.enemy_priors, &node.enemy_legal, enemy_prior);
+    refill_zeroed(player_sum, player_len);
+    refill_zeroed(enemy_sum, enemy_len);
     // Python initializes the iterates to the priors before the loop; with
     // at least one iteration (asserted above) they are overwritten before
     // any use, but the mirror keeps the ports diffable line by line.
-    let mut player = player_prior.clone();
-    let mut enemy = enemy_prior.clone();
-    let mut row_values = vec![0.0; player_len];
-    let mut column_values = vec![0.0; enemy_len];
+    refill_copy(player, player_prior);
+    refill_copy(enemy, enemy_prior);
+    refill_zeroed(row_values, player_len);
+    refill_zeroed(column_values, enemy_len);
     // Linear weights continue where the last batch stopped; on a fresh
     // node the base is 0.0 and `0.0 + t` is `t` bitwise, which is what
     // makes the first average-mode solve match the cold solver exactly.
     let weight_base = f64::from(node.solve_count);
     for iteration in 0..iterations {
-        regret_strategy(&player_regrets, &player_prior, &mut player);
-        regret_strategy(&enemy_regrets, &enemy_prior, &mut enemy);
+        regret_strategy(player_regrets, player_prior, player);
+        regret_strategy(enemy_regrets, enemy_prior, enemy);
         let weight = if cfr_plus {
             weight_base + f64::from(iteration + 1)
         } else {
             1.0
         };
-        for (sum, &probability) in player_sum.iter_mut().zip(&player) {
+        for (sum, &probability) in player_sum.iter_mut().zip(player.iter()) {
             *sum += weight * probability;
         }
-        for (sum, &probability) in enemy_sum.iter_mut().zip(&enemy) {
+        for (sum, &probability) in enemy_sum.iter_mut().zip(enemy.iter()) {
             *sum += weight * probability;
         }
-        mat_vec(&matrix, enemy_len, &enemy, &mut row_values);
-        let current_value = dot(&player, &row_values);
-        for (regret, &row_value) in player_regrets.iter_mut().zip(&row_values) {
+        mat_vec(matrix, enemy_len, enemy, row_values);
+        let current_value = dot(player, row_values);
+        for (regret, &row_value) in player_regrets.iter_mut().zip(row_values.iter()) {
             *regret = (*regret + row_value - current_value).max(0.0);
         }
         if cfr_plus {
-            regret_strategy(&player_regrets, &player_prior, &mut player);
+            regret_strategy(player_regrets, player_prior, player);
         }
-        vec_mat(&player, &matrix, enemy_len, &mut column_values);
+        vec_mat(player, matrix, enemy_len, column_values);
         let enemy_value = if cfr_plus {
-            dot(&enemy, &column_values)
+            dot(enemy, column_values)
         } else {
             current_value
         };
-        for (regret, &column_value) in enemy_regrets.iter_mut().zip(&column_values) {
+        for (regret, &column_value) in enemy_regrets.iter_mut().zip(column_values.iter()) {
             *regret = (*regret + enemy_value - column_value).max(0.0);
         }
     }
@@ -280,20 +346,22 @@ pub fn solve_node<S>(
             enemy[index] = node.enemy_strategy_sum[action] / weight_total;
         }
     }
-    let mut player_policy = vec![0.0; action_count];
-    let mut enemy_policy = vec![0.0; action_count];
-    for (index, &action) in node.player_legal.iter().enumerate() {
-        player_policy[action] = player[index];
-    }
-    for (index, &action) in node.enemy_legal.iter().enumerate() {
-        enemy_policy[action] = enemy[index];
-    }
-    node.player_policy = player_policy;
-    node.enemy_policy = enemy_policy;
-    mat_vec(&matrix, enemy_len, &enemy, &mut row_values);
-    node.root_value = dot(&player, &row_values);
-    vec_mat(&player, &matrix, enemy_len, &mut column_values);
-    node.exploitability = max_of(&row_values) - min_of(&column_values);
+    scatter_policy(
+        &mut node.player_policy,
+        action_count,
+        &node.player_legal,
+        player,
+    );
+    scatter_policy(
+        &mut node.enemy_policy,
+        action_count,
+        &node.enemy_legal,
+        enemy,
+    );
+    mat_vec(matrix, enemy_len, enemy, row_values);
+    node.root_value = dot(player, row_values);
+    vec_mat(player, matrix, enemy_len, column_values);
+    node.exploitability = max_of(row_values) - min_of(column_values);
 }
 
 /// Draws an index from a probability vector (`_sample`): cumulative scan
@@ -326,6 +394,22 @@ pub fn mixed_policy(
     visits: u32,
     exploration: f64,
 ) -> Vec<f64> {
+    let mut result = Vec::new();
+    mixed_policy_into(policy, priors, legal, visits, exploration, &mut result);
+    result
+}
+
+/// [`mixed_policy`] into a caller-held buffer: one exact allocation when
+/// the buffer is too small, none once it is warm. The descent reuses two
+/// engine-held buffers this way, one per side, on every step.
+pub fn mixed_policy_into(
+    policy: &[f64],
+    priors: &[f64],
+    legal: &[usize],
+    visits: u32,
+    exploration: f64,
+    out: &mut Vec<f64>,
+) {
     assert_eq!(
         policy.len(),
         priors.len(),
@@ -334,16 +418,15 @@ pub fn mixed_policy(
     assert!(!legal.is_empty(), "cannot mix over an empty legal set");
     let epsilon = (exploration / f64::from(visits + 1).sqrt()).max(0.02);
     let prior_total: f64 = legal.iter().map(|&action| priors[action]).sum();
-    let mut result = vec![0.0; priors.len()];
+    refill_zeroed(out, priors.len());
     for &action in legal {
         let exploration_share = if prior_total > 0.0 {
             priors[action] / prior_total
         } else {
             1.0 / legal.len() as f64
         };
-        result[action] = (1.0 - epsilon) * policy[action] + epsilon * exploration_share;
+        out[action] = (1.0 - epsilon) * policy[action] + epsilon * exploration_share;
     }
-    result
 }
 
 /// Probability of sampling a fresh chance outcome for a pair with
@@ -447,13 +530,66 @@ pub fn strategy_weight_total(cfr_plus: bool, solve_count: u32) -> f64 {
 /// last-iterate policy) when no weight has accumulated. `total_weight`
 /// is [`strategy_weight_total`] of the node's solve count.
 pub fn average_policy(strategy_sum: &[f64], total_weight: f64, fallback: &[f64]) -> Vec<f64> {
+    let mut result = Vec::new();
+    average_policy_into(strategy_sum, total_weight, fallback, &mut result);
+    result
+}
+
+/// [`average_policy`] into a caller-held buffer: one exact allocation
+/// when the buffer is too small, none once it is warm. The root driver's
+/// convergence tracker reuses two buffers this way across every learned
+/// simulation.
+pub fn average_policy_into(
+    strategy_sum: &[f64],
+    total_weight: f64,
+    fallback: &[f64],
+    out: &mut Vec<f64>,
+) {
     if total_weight <= 0.0 {
-        return fallback.to_vec();
+        refill_copy(out, fallback);
+        return;
     }
-    strategy_sum
-        .iter()
-        .map(|value| value / total_weight)
-        .collect()
+    out.clear();
+    out.reserve_exact(strategy_sum.len());
+    out.extend(strategy_sum.iter().map(|value| value / total_weight));
+}
+
+/// Refills `out` with the entries of `values` at the `legal` indices:
+/// one exact allocation when the buffer's capacity is too small, none
+/// once it is warm.
+fn refill_gather(out: &mut Vec<f64>, values: &[f64], legal: &[usize]) {
+    out.clear();
+    out.reserve_exact(legal.len());
+    out.extend(legal.iter().map(|&action| values[action]));
+}
+
+/// Refills `out` with `len` zeros, allocating like [`refill_gather`].
+fn refill_zeroed(out: &mut Vec<f64>, len: usize) {
+    out.clear();
+    out.reserve_exact(len);
+    out.resize(len, 0.0);
+}
+
+/// Refills `out` with a copy of `values`, allocating like
+/// [`refill_gather`].
+fn refill_copy(out: &mut Vec<f64>, values: &[f64]) {
+    out.clear();
+    out.reserve_exact(values.len());
+    out.extend_from_slice(values);
+}
+
+/// Scatters a compact legal-ordered `strategy` into the full-length
+/// `policy`, zero elsewhere. The first install allocates the policy
+/// exactly; every later install rewrites it in place.
+fn scatter_policy(policy: &mut Vec<f64>, action_count: usize, legal: &[usize], strategy: &[f64]) {
+    if policy.len() == action_count {
+        policy.fill(0.0);
+    } else {
+        *policy = vec![0.0; action_count];
+    }
+    for (index, &action) in legal.iter().enumerate() {
+        policy[action] = strategy[index];
+    }
 }
 
 /// The RM+ per-iteration strategy: positive regrets normalized, falling

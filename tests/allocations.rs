@@ -7,8 +7,9 @@
 //! - **Laws** (hegel properties): allocation profiles that hold for every
 //!   input — the solvers allocate a fixed number of buffers whose sizes
 //!   are a closed-form function of the legal-set shape, never of the
-//!   iteration count or the extension flags, and the scalar helpers
-//!   allocate nothing.
+//!   iteration count or the extension flags, the scalar helpers allocate
+//!   nothing, and the scratch-threaded solve and `_into` helpers reach
+//!   zero-allocation steady state once their buffers are warm.
 //! - **Pins** (directed, seeded): exact counts and bytes for the four
 //!   bench-mirror scenarios, so `cargo bench` timings and these numbers
 //!   describe the same work.
@@ -29,10 +30,11 @@ use std::cell::Cell;
 
 use hegel::{generators as gs, TestCase};
 use mcts_rs::joint::{
-    argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
-    normalized_prior, policy_entropy, rng::next_f64, sample_index, solve_node, solve_zero_sum_regret,
-    strategy_weight_total, Evaluation, JointSearchConfig, RootNoise, SearchOptions,
-    SimultaneousTreeSearch, SplitMix64, Tree,
+    argmax_first, average_policy, average_policy_into, chance_resample_probability, expansion_pairs,
+    mixed_policy, mixed_policy_into, normalized_prior, policy_entropy, rng::next_f64, sample_index,
+    solve_node, solve_node_with_scratch, solve_zero_sum_regret, strategy_weight_total, Evaluation,
+    JointSearchConfig, RootNoise, SearchOptions, SimultaneousTreeSearch, SolveScratch, SplitMix64,
+    Tree,
 };
 use mcts_rs::{Bump, Mcts};
 use support::joint::{MatrixProvider, ToySnapshot, TwoStage, UniformEvaluator};
@@ -116,32 +118,30 @@ fn pseudo_priors(action_count: usize, seed: u64) -> Vec<f64> {
 }
 
 /// The cold solver's requested bytes: one buffer per intermediate, sized
-/// by the legal-set shape alone. `zero_*` marks a side whose priors carry
-/// no mass, which pays one extra fallback buffer inside
-/// [`normalized_prior`].
-fn cold_solver_expected(
+/// by the legal-set shape alone. Mass-free prior sides change nothing —
+/// the prior normalization fills its single output uniformly in place.
+fn cold_solver_expected(player_len: usize, enemy_len: usize, action_count: usize) -> (u64, u64) {
+    let words = player_len * enemy_len + 6 * player_len + 6 * enemy_len + 2 * action_count;
+    (15, 8 * words as u64)
+}
+
+/// A node's first warm solve: eleven working buffers (two fewer than the
+/// cold solver — no time-average copies) plus the two full-length
+/// policies installed into the node.
+fn warm_solver_first_expected(
     player_len: usize,
     enemy_len: usize,
     action_count: usize,
-    zero_player: bool,
-    zero_enemy: bool,
 ) -> (u64, u64) {
-    let count = 15 + u64::from(zero_player) + u64::from(zero_enemy);
-    let mut words = player_len * enemy_len + 6 * player_len + 6 * enemy_len + 2 * action_count;
-    if zero_player {
-        words += player_len;
-    }
-    if zero_enemy {
-        words += enemy_len;
-    }
-    (count, 8 * words as u64)
-}
-
-/// The warm solver's requested bytes: two buffers fewer than the cold
-/// solver (no time-average copies), same shape-only sizing.
-fn warm_solver_expected(player_len: usize, enemy_len: usize, action_count: usize) -> (u64, u64) {
     let words = player_len * enemy_len + 5 * player_len + 5 * enemy_len + 2 * action_count;
     (13, 8 * words as u64)
+}
+
+/// Every later solve of the node: the installed policies are rewritten
+/// in place, leaving only the eleven working buffers.
+fn warm_solver_repeat_expected(player_len: usize, enemy_len: usize) -> (u64, u64) {
+    let words = player_len * enemy_len + 5 * player_len + 5 * enemy_len;
+    (11, 8 * words as u64)
 }
 
 /// Draws a non-empty legal subset of `0..action_count`.
@@ -221,8 +221,8 @@ fn scalar_helpers_never_allocate(tc: TestCase) {
     assert_eq!(delta, (0, 0), "strategy_weight_total must not allocate");
 }
 
-/// The vector helpers allocate exactly one output buffer on their main
-/// paths; only mass-free fallbacks pay a second one.
+/// The vector helpers allocate exactly one output buffer, on every
+/// branch — including the mass-free fallbacks.
 #[hegel::test(test_cases = 60)]
 fn vector_helpers_allocate_exactly_their_output(tc: TestCase) {
     let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(8));
@@ -233,17 +233,16 @@ fn vector_helpers_allocate_exactly_their_output(tc: TestCase) {
     let visits: u32 = tc.draw(gs::integers::<u32>().min_value(0).max_value(500));
     let zero_mass: bool = tc.draw(gs::booleans());
 
-    // normalized_prior: one legal-sized gather, renormalized in place; a
-    // mass-free prior pays one extra uniform fallback buffer.
+    // normalized_prior: one legal-sized gather, renormalized in place on
+    // both the positive and the mass-free uniform branch.
     let flat = vec![0.0; action_count];
     let input = if zero_mass { &flat } else { &priors };
     let (delta, _) = measure(|| normalized_prior(input, &legal));
-    let expected = if zero_mass {
-        (2, 16 * legal_len)
-    } else {
-        (1, 8 * legal_len)
-    };
-    assert_eq!(delta, expected, "normalized_prior allocation profile");
+    assert_eq!(
+        delta,
+        (1, 8 * legal_len),
+        "normalized_prior allocation profile"
+    );
 
     // mixed_policy: exactly the full-length output vector, on both the
     // positive-prior and uniform-fallback branches.
@@ -302,10 +301,10 @@ fn expansion_pairs_allocate_like_a_plain_push_loop(tc: TestCase) {
 // --- Solver laws ----------------------------------------------------------
 
 /// The cold solver's allocation profile is a closed-form function of the
-/// legal-set shape: fifteen buffers (plus one per mass-free prior side),
-/// `8·(P·E + 6P + 6E + 2n)` bytes — for every payoff, every iteration
-/// count, and both CFR+ settings. Iterating more costs zero allocator
-/// traffic.
+/// legal-set shape: fifteen buffers, `8·(P·E + 6P + 6E + 2n)` bytes —
+/// for every payoff, every prior (mass-free sides included), every
+/// iteration count, and both CFR+ settings. Iterating more costs zero
+/// allocator traffic.
 #[hegel::test(test_cases = 40)]
 fn cold_solver_allocations_depend_only_on_the_legal_shape(tc: TestCase) {
     let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
@@ -332,13 +331,7 @@ fn cold_solver_allocations_depend_only_on_the_legal_shape(tc: TestCase) {
     let low_iterations: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(8));
     let high_iterations: u32 = tc.draw(gs::integers::<u32>().min_value(9).max_value(48));
 
-    let expected = cold_solver_expected(
-        player_legal.len(),
-        enemy_legal.len(),
-        action_count,
-        zero_player,
-        zero_enemy,
-    );
+    let expected = cold_solver_expected(player_legal.len(), enemy_legal.len(), action_count);
     for iterations in [low_iterations, high_iterations] {
         for cfr_plus in [false, true] {
             let (delta, _) = measure(|| {
@@ -362,10 +355,11 @@ fn cold_solver_allocations_depend_only_on_the_legal_shape(tc: TestCase) {
     }
 }
 
-/// The warm node solve allocates exactly thirteen buffers,
-/// `8·(P·E + 5P + 5E + 2n)` bytes — independent of the iteration count,
-/// of both extension flags, and of how many solves the node has already
-/// absorbed. Repeat solves reach allocation steady state immediately.
+/// The warm node solve's allocation profile is a closed-form function of
+/// the node shape alone: the first solve pays thirteen buffers,
+/// `8·(P·E + 5P + 5E + 2n)` bytes, and every later solve rewrites the
+/// installed policies in place and pays only the eleven working buffers
+/// — independent of the iteration count and of both extension flags.
 #[hegel::test(test_cases = 40)]
 fn warm_solver_allocations_depend_only_on_the_node_shape(tc: TestCase) {
     let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
@@ -389,45 +383,168 @@ fn warm_solver_allocations_depend_only_on_the_node_shape(tc: TestCase) {
         &config,
     );
     let node = tree.node_mut(node_id);
-    let expected = warm_solver_expected(
+    let first_expected = warm_solver_first_expected(
         node.player_legal.len(),
         node.enemy_legal.len(),
         action_count,
     );
+    let repeat_expected =
+        warm_solver_repeat_expected(node.player_legal.len(), node.enemy_legal.len());
 
+    let mut solves = 0u32;
     for iterations in [low_iterations, high_iterations, low_iterations] {
         for (average_policies, cfr_plus) in
             [(false, false), (false, true), (true, false), (true, true)]
         {
             let (delta, ()) =
                 measure(|| solve_node(&mut *node, iterations, average_policies, cfr_plus));
+            let expected = if solves == 0 {
+                first_expected
+            } else {
+                repeat_expected
+            };
+            solves += 1;
             assert_eq!(
                 delta, expected,
-                "warm solve at {iterations} iterations (average: {average_policies}, \
-                 cfr_plus: {cfr_plus}) must match the shape formula"
+                "warm solve #{solves} at {iterations} iterations (average: \
+                 {average_policies}, cfr_plus: {cfr_plus}) must match the shape formula"
             );
         }
     }
+}
+
+/// A caller-held scratch makes every solve after a node's first
+/// completely allocation-free: the scratch buffers and the installed
+/// policies are all rewritten in place, whatever the iteration count or
+/// flag combination. A second same-shaped node entering the warm scratch
+/// pays exactly its own two first-install policies, nothing else.
+#[hegel::test(test_cases = 40)]
+fn scratch_solves_reach_zero_allocation_steady_state(tc: TestCase) {
+    let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
+    let player_legal = draw_legal(&tc, action_count);
+    let enemy_legal = draw_legal(&tc, action_count);
+    let player_mask: u64 = player_legal.iter().map(|&action| 1u64 << action).sum();
+    let enemy_mask: u64 = enemy_legal.iter().map(|&action| 1u64 << action).sum();
+    let iterations: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(24));
+
+    let config = JointSearchConfig::default();
+    let mut tree: Tree<ToySnapshot> = Tree::new(action_count);
+    let first_id = tree.make_node(
+        ToySnapshot::live(0, player_mask, enemy_mask),
+        Evaluation {
+            player_priors: draw_positive_priors(&tc, action_count),
+            enemy_priors: draw_positive_priors(&tc, action_count),
+            value: 0.0,
+        },
+        &config,
+    );
+    let second_id = tree.make_node(
+        ToySnapshot::live(1, player_mask, enemy_mask),
+        Evaluation {
+            player_priors: draw_positive_priors(&tc, action_count),
+            enemy_priors: draw_positive_priors(&tc, action_count),
+            value: 0.0,
+        },
+        &config,
+    );
+    let mut scratch = SolveScratch::default();
+
+    let node = tree.node_mut(first_id);
+    let (first, ()) =
+        measure(|| solve_node_with_scratch(&mut *node, iterations, false, false, &mut scratch));
+    assert_eq!(
+        first,
+        warm_solver_first_expected(player_legal.len(), enemy_legal.len(), action_count),
+        "the first scratch solve pays the full first-solve profile"
+    );
+    for (average_policies, cfr_plus) in [(false, false), (false, true), (true, false), (true, true)] {
+        let (delta, ()) = measure(|| {
+            solve_node_with_scratch(
+                &mut *node,
+                iterations,
+                average_policies,
+                cfr_plus,
+                &mut scratch,
+            )
+        });
+        assert_eq!(
+            delta,
+            (0, 0),
+            "repeat scratch solve (average: {average_policies}, cfr_plus: {cfr_plus}) \
+             must not allocate"
+        );
+    }
+
+    let node = tree.node_mut(second_id);
+    let (delta, ()) =
+        measure(|| solve_node_with_scratch(&mut *node, iterations, false, false, &mut scratch));
+    assert_eq!(
+        delta,
+        (2, 16 * action_count as u64),
+        "a fresh same-shaped node pays exactly its two installed policies"
+    );
+    let (delta, ()) =
+        measure(|| solve_node_with_scratch(&mut *node, iterations, false, false, &mut scratch));
+    assert_eq!(delta, (0, 0), "and is allocation-free from then on");
+}
+
+/// The `_into` policy helpers pay exactly one exact-sized allocation
+/// while their output buffer is cold and nothing once it is warm — on
+/// every branch, including the average fallback.
+#[hegel::test(test_cases = 60)]
+fn into_helpers_reach_zero_allocations_on_warm_buffers(tc: TestCase) {
+    let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(8));
+    let priors = draw_positive_priors(&tc, action_count);
+    let policy = draw_positive_priors(&tc, action_count);
+    let strategy_sum = draw_positive_priors(&tc, action_count);
+    let legal = draw_legal(&tc, action_count);
+    let visits: u32 = tc.draw(gs::integers::<u32>().min_value(0).max_value(500));
+    let weight: f64 = tc.draw(gs::floats::<f64>().min_value(-1.0).max_value(64.0));
+
+    let mut buffer: Vec<f64> = Vec::new();
+    let (delta, ()) =
+        measure(|| mixed_policy_into(&policy, &priors, &legal, visits, 0.1, &mut buffer));
+    assert_eq!(
+        delta,
+        (1, 8 * action_count as u64),
+        "cold mixed_policy_into pays exactly its output"
+    );
+    let (delta, ()) =
+        measure(|| mixed_policy_into(&policy, &priors, &legal, visits, 0.1, &mut buffer));
+    assert_eq!(delta, (0, 0), "warm mixed_policy_into must not allocate");
+    let (delta, ()) = measure(|| average_policy_into(&strategy_sum, weight, &policy, &mut buffer));
+    assert_eq!(
+        delta,
+        (0, 0),
+        "warm average_policy_into must not allocate (weight {weight})"
+    );
 }
 
 // --- Bench-mirror pins (deterministic joint paths) ------------------------
 
 /// joint/cold_solve_13x13_2048: the root equilibrium.
 const COLD_SOLVE_13X13_2048: (u64, u64) = (15, 2808);
-/// joint/warm_solve_16_13x13: the per-learned-simulation node solve.
-const WARM_SOLVE_16_13X13: (u64, u64) = (13, 2600);
+/// joint/warm_solve_16_13x13: the per-learned-simulation node solve. A
+/// node's very first solve additionally installs its two policies; the
+/// bench loop's steady state is the repeat profile.
+const WARM_SOLVE_16_13X13_FIRST: (u64, u64) = (13, 2600);
+const WARM_SOLVE_16_13X13_REPEAT: (u64, u64) = (11, 2392);
 /// joint/root_only_13: a full root-only search call (169-cell install
 /// plus cold equilibrium plus result assembly).
 const ROOT_ONLY_13: (u64, u64) = (251, 94_724);
 /// joint/deep_two_stage_budget_320: a full deep search at the default
 /// transition budget — descent, resampling, convergence tracking, and
-/// one warm node solve per learned simulation.
-const DEEP_TWO_STAGE_BUDGET_320: (u64, u64) = (10_519, 228_836);
+/// one warm node solve per learned simulation. The engine-held solver
+/// scratch and mix buffers absorb every per-solve and per-descent
+/// buffer (this pin was (10_519, 228_836) with per-call vectors),
+/// leaving node construction, first-install policies, the two cold
+/// equilibria, and result assembly.
+const DEEP_TWO_STAGE_BUDGET_320: (u64, u64) = (379, 59_204);
 /// The deep bench scenario with every opt-in extension stacked on
-/// (prior-mass cutoff, root noise, average-strategy policies, CFR+).
-/// Slightly below the plain deep pin: the extensions steer the same
-/// budget down a different trajectory, they add no per-solve buffers.
-const DEEP_TWO_STAGE_ALL_EXTENSIONS: (u64, u64) = (10_310, 227_492);
+/// (prior-mass cutoff, root noise, average-strategy policies, CFR+);
+/// (10_310, 227_492) before the scratch. The extensions add no
+/// per-solve buffers, only a different trajectory over the same budget.
+const DEEP_TWO_STAGE_ALL_EXTENSIONS: (u64, u64) = (396, 61_540);
 
 #[test]
 fn cold_solve_bench_mirror_matches_its_pin() {
@@ -451,7 +568,7 @@ fn cold_solve_bench_mirror_matches_its_pin() {
     assert_eq!(delta, COLD_SOLVE_13X13_2048, "joint/cold_solve_13x13_2048");
     assert_eq!(
         delta,
-        cold_solver_expected(n, n, n, false, false),
+        cold_solver_expected(n, n, n),
         "the pin must agree with the shape formula"
     );
 }
@@ -480,12 +597,23 @@ fn warm_solve_bench_mirror_matches_its_pin() {
     }
     let (first, ()) = measure(|| solve_node(&mut *node, 16, false, false));
     let (second, ()) = measure(|| solve_node(&mut *node, 16, false, false));
-    assert_eq!(first, WARM_SOLVE_16_13X13, "joint/warm_solve_16_13x13");
-    assert_eq!(second, first, "repeat warm solves are allocation-identical");
+    assert_eq!(
+        first, WARM_SOLVE_16_13X13_FIRST,
+        "joint/warm_solve_16_13x13 first solve"
+    );
+    assert_eq!(
+        second, WARM_SOLVE_16_13X13_REPEAT,
+        "joint/warm_solve_16_13x13 steady state"
+    );
     assert_eq!(
         first,
-        warm_solver_expected(n, n, n),
-        "the pin must agree with the shape formula"
+        warm_solver_first_expected(n, n, n),
+        "the first pin must agree with the shape formula"
+    );
+    assert_eq!(
+        second,
+        warm_solver_repeat_expected(n, n),
+        "the repeat pin must agree with the shape formula"
     );
 }
 

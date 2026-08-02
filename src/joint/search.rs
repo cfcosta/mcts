@@ -22,8 +22,9 @@ use crate::joint::result::{
 };
 use crate::joint::rng::{next_f64, next_index, SplitMix64};
 use crate::joint::solver::{
-    argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
-    policy_entropy, sample_index, solve_node, solve_zero_sum_regret, strategy_weight_total,
+    argmax_first, average_policy_into, chance_resample_probability, expansion_pairs,
+    mixed_policy_into, policy_entropy, sample_index, solve_node_with_scratch, solve_zero_sum_regret,
+    strategy_weight_total, SolveScratch,
 };
 use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvider};
 
@@ -44,6 +45,10 @@ use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvi
 ///
 /// The search object carries no per-call state: every [`search`] call is
 /// the Python pattern of a fresh search object reusing persistent RNGs.
+/// It does carry reusable working memory — the solver scratch and the
+/// two mixed-policy buffers — but their contents never shape behavior:
+/// every use overwrites them before reading, so reuse is bitwise
+/// invisible.
 ///
 /// [`search`]: SimultaneousTreeSearch::search
 #[derive(Debug)]
@@ -53,6 +58,9 @@ pub struct SimultaneousTreeSearch<R: RngCore = SplitMix64> {
     chance_rng: R,
     budget_rng: R,
     noise_rng: R,
+    solve_scratch: SolveScratch,
+    player_mix: Vec<f64>,
+    enemy_mix: Vec<f64>,
 }
 
 /// Per-search bookkeeping: the Python search object's counters and
@@ -136,6 +144,9 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             chance_rng,
             budget_rng,
             noise_rng,
+            solve_scratch: SolveScratch::default(),
+            player_mix: Vec::new(),
+            enemy_mix: Vec::new(),
         }
     }
 
@@ -360,11 +371,12 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         run.possible_joint_pairs += u32::try_from(possible).expect("pair count fits u32");
         run.sampled_joint_pairs += u32::try_from(pairs.len()).expect("pair count fits u32");
         run.chance_outcomes += transitions;
-        solve_node(
+        solve_node_with_scratch(
             node,
             self.config.regret_iterations_per_update,
             self.config.average_strategy_policies,
             self.config.cfr_plus_solves,
+            &mut self.solve_scratch,
         );
         transitions
     }
@@ -402,27 +414,31 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         E: Evaluator<P::Snapshot>,
     {
         run.max_depth_reached = run.max_depth_reached.max(depth);
-        let (player_policy, enemy_policy) = {
+        {
             let node = tree.node_mut(node_id);
             node.visits += 1;
-            let player = mixed_policy(
+            // The engine-held mix buffers are refilled at every level of
+            // the descent; reuse across the recursion below is safe
+            // because both actions are sampled before descending.
+            mixed_policy_into(
                 &node.player_policy,
                 &node.player_priors,
                 &node.player_legal,
                 node.visits,
                 self.config.exploration,
+                &mut self.player_mix,
             );
-            let enemy = mixed_policy(
+            mixed_policy_into(
                 &node.enemy_policy,
                 &node.enemy_priors,
                 &node.enemy_legal,
                 node.visits,
                 self.config.exploration,
+                &mut self.enemy_mix,
             );
-            (player, enemy)
-        };
-        let player_action = sample_index(&player_policy, &mut self.selection_rng);
-        let enemy_action = sample_index(&enemy_policy, &mut self.selection_rng);
+        }
+        let player_action = sample_index(&self.player_mix, &mut self.selection_rng);
+        let enemy_action = sample_index(&self.enemy_mix, &mut self.selection_rng);
         let mut cost = 0u32;
         let evidence = u32::try_from(
             tree.node(node_id)
@@ -534,11 +550,12 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         if learned {
             let node = tree.node_mut(node_id);
             node.record_value(player_action, enemy_action, value);
-            solve_node(
+            solve_node_with_scratch(
                 node,
                 self.config.regret_iterations_per_update,
                 self.config.average_strategy_policies,
                 self.config.cfr_plus_solves,
+                &mut self.solve_scratch,
             );
         }
         Ok((value, cost, learned))
@@ -614,6 +631,10 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         };
         let mut previous_player = initial_player.clone();
         let mut previous_enemy = initial_enemy.clone();
+        // Refilled before every read; swapped with `previous_*` so both
+        // pairs are reused across the whole loop.
+        let mut current_player: Vec<f64> = Vec::new();
+        let mut current_enemy: Vec<f64> = Vec::new();
         let mut stable_updates = 0u32;
         let mut attempts_without_learning = 0u32;
         while run.adaptive_deep_selected && transitions < self.config.expansion_budget {
@@ -627,15 +648,17 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                         let node = tree.node(node_id);
                         let weight_total =
                             strategy_weight_total(self.config.cfr_plus_solves, node.solve_count);
-                        let current_player = average_policy(
+                        average_policy_into(
                             &node.player_strategy_sum,
                             weight_total,
                             &node.player_policy,
+                            &mut current_player,
                         );
-                        let current_enemy = average_policy(
+                        average_policy_into(
                             &node.enemy_strategy_sum,
                             weight_total,
                             &node.enemy_policy,
+                            &mut current_enemy,
                         );
                         let change = l1_distance(&current_player, &previous_player)
                             + l1_distance(&current_enemy, &previous_enemy);
@@ -644,8 +667,8 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                         } else {
                             0
                         };
-                        previous_player = current_player;
-                        previous_enemy = current_enemy;
+                        std::mem::swap(&mut previous_player, &mut current_player);
+                        std::mem::swap(&mut previous_enemy, &mut current_enemy);
                         if transitions >= self.config.minimum_expansion_budget
                             && run.max_depth_reached >= self.config.max_depth - 1
                             && stable_updates >= self.config.convergence_patience
