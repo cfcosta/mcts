@@ -12,7 +12,7 @@ fn main() {
     let mut bump = Bump::new();
 
     while !game.is_terminal() {
-        let action = Mcts::new(&bump, game.clone(), 0.5).search(10000);
+        let action = Mcts::new(&bump, game, 0.5).search(10000);
         game = game.step(action);
         game.render();
         bump.reset();
@@ -232,7 +232,7 @@ const NTH_EMPTY_CELL: [[u8; 9]; 512] = {
         let mut rank = 0;
         while remaining != 0 {
             let position = remaining.trailing_zeros() as u8;
-            table[bits][rank] = (position / 3) << 2 | position % 3;
+            table[bits][rank] = ((position / 3) << 2) | (position % 3);
             remaining &= remaining - 1;
             rank += 1;
         }

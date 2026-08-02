@@ -40,7 +40,7 @@ fn search_always_returns_a_legal_action() {
     for (name, position) in &positions {
         for n in [1, 2, 7, 100] {
             let bump = Bump::new();
-            let action = Mcts::new(&bump, position.clone(), C).search(n);
+            let action = Mcts::new(&bump, *position, C).search(n);
             assert!(
                 position.get_legal_actions().contains(&action),
                 "{name}, n={n}: illegal action {action:?}"
@@ -81,7 +81,7 @@ fn blocks_the_opponents_winning_move() {
     let position = ttt_after(&[(1, 1), (0, 0), (2, 2), (0, 1)]);
     for attempt in 0..3 {
         let bump = Bump::new();
-        let action = Mcts::new(&bump, position.clone(), C).search(5000);
+        let action = Mcts::new(&bump, position, C).search(5000);
         assert_eq!(action, (0, 2), "attempt {attempt}: must block O's win");
     }
 }

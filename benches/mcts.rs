@@ -52,8 +52,7 @@ fn bench_search_tic_tac_toe(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new(*name, n), &n, |b, &n| {
                 let mut bump = Bump::new();
                 b.iter(|| {
-                    let action =
-                        black_box(Mcts::new(&bump, black_box(position.clone()), TTT_C).search(n));
+                    let action = black_box(Mcts::new(&bump, black_box(*position), TTT_C).search(n));
                     bump.reset();
                     action
                 });
@@ -73,8 +72,7 @@ fn bench_search_ultimate(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new(*name, n), &n, |b, &n| {
                 let mut bump = Bump::new();
                 b.iter(|| {
-                    let action =
-                        black_box(Mcts::new(&bump, black_box(position.clone()), UTTT_C).search(n));
+                    let action = black_box(Mcts::new(&bump, black_box(*position), UTTT_C).search(n));
                     bump.reset();
                     action
                 });
@@ -93,7 +91,7 @@ fn bench_full_game(c: &mut Criterion) {
         b.iter(|| {
             let mut state = TicTacToe::new();
             while !state.is_terminal() {
-                let action = Mcts::new(&bump, state.clone(), TTT_C).search(500);
+                let action = Mcts::new(&bump, state, TTT_C).search(500);
                 bump.reset();
                 state = state.step(action);
             }
@@ -105,7 +103,7 @@ fn bench_full_game(c: &mut Criterion) {
         b.iter(|| {
             let mut state = UltimateTicTacToe::new();
             while !state.is_terminal() {
-                let action = Mcts::new(&bump, state.clone(), UTTT_C).search(250);
+                let action = Mcts::new(&bump, state, UTTT_C).search(250);
                 bump.reset();
                 state = state.step(action);
             }
@@ -127,9 +125,8 @@ fn bench_tree_ops(c: &mut Criterion) {
     group.bench_function("deep_chain_select_backprop", |b| {
         let mut bump = Bump::new();
         b.iter(|| {
-            let action = Mcts::new(&bump, ChainGame::new(512), 1.0).search(n);
+            Mcts::new(&bump, ChainGame::new(512), 1.0).search(n);
             bump.reset();
-            action
         });
     });
 
@@ -158,7 +155,7 @@ fn bench_state_tic_tac_toe(c: &mut Criterion) {
     let mut group = c.benchmark_group("state/tic_tac_toe");
     let mid = ttt_after(&[(1, 1), (0, 0), (2, 0), (0, 2)]);
     let action = mid.get_legal_actions()[0];
-    group.bench_function("clone", |b| b.iter(|| black_box(&mid).clone()));
+    group.bench_function("clone", |b| b.iter(|| *black_box(&mid)));
     group.bench_function("step", |b| {
         b.iter(|| black_box(&mid).step(black_box(action)))
     });
@@ -173,7 +170,7 @@ fn bench_state_ultimate(c: &mut Criterion) {
     let mut group = c.benchmark_group("state/ultimate");
     let mid = uttt_after_plies(6);
     let action = mid.get_legal_actions()[0];
-    group.bench_function("clone", |b| b.iter(|| black_box(&mid).clone()));
+    group.bench_function("clone", |b| b.iter(|| *black_box(&mid)));
     group.bench_function("step", |b| {
         b.iter(|| black_box(&mid).step(black_box(action)))
     });

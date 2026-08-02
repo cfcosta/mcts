@@ -22,7 +22,7 @@ fn invariants_hold_for_tic_tac_toe_positions() {
         for n in [1, 2, 3, 10, 137, 2000] {
             for c in [0.0, 0.5, 2.0] {
                 let bump = Bump::new();
-                let mut mcts = Mcts::new(&bump, position.clone(), c);
+                let mut mcts = Mcts::new(&bump, *position, c);
                 mcts.search(n);
                 assert_tree_invariants(&mcts, n, &format!("ttt {name}, n={n}, c={c}"));
             }
@@ -39,7 +39,7 @@ fn invariants_hold_for_ultimate_tic_tac_toe_positions() {
     for (name, position) in &positions {
         for n in [1, 10, 400] {
             let bump = Bump::new();
-            let mut mcts = Mcts::new(&bump, position.clone(), 1.4);
+            let mut mcts = Mcts::new(&bump, *position, 1.4);
             mcts.search(n);
             assert_tree_invariants(&mcts, n, &format!("uttt {name}, n={n}"));
         }

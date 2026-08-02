@@ -23,7 +23,7 @@ fn shared_lookup_table<T: Copy>(
         .unwrap();
     let tables = tables.get_or_init(|| Mutex::new(HashMap::new()));
     let mut tables = tables.lock().unwrap();
-    *tables.entry(len).or_insert_with(|| {
+    tables.entry(len).or_insert_with(|| {
         let values = (0..len).map(value).collect::<Vec<_>>().into_boxed_slice();
         Box::leak(values)
     })

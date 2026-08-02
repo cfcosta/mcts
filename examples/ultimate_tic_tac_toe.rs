@@ -13,7 +13,7 @@ fn main() {
     let mut game = UltimateTicTacToe::new();
     let mut bump = Bump::new();
     while !game.is_terminal() {
-        let action = Mcts::new(&bump, game.clone(), 1.4142356237).search(1500);
+        let action = Mcts::new(&bump, game, 1.4142356237).search(1500);
         game = game.step(action);
         game.render();
         bump.reset();
@@ -361,7 +361,7 @@ const NTH_EMPTY_CELL: [[u8; 9]; 512] = {
         let mut rank = 0;
         while remaining != 0 {
             let position = remaining.trailing_zeros() as u8;
-            table[bits][rank] = (position / 3) << 2 | position % 3;
+            table[bits][rank] = ((position / 3) << 2) | (position % 3);
             remaining &= remaining - 1;
             rank += 1;
         }

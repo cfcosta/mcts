@@ -31,7 +31,7 @@ const NTH_EMPTY_CELL: [[u8; 9]; 512] = {
         let mut rank = 0;
         while remaining != 0 {
             let position = remaining.trailing_zeros() as u8;
-            table[bits][rank] = (position / 3) << 2 | position % 3;
+            table[bits][rank] = ((position / 3) << 2) | (position % 3);
             remaining &= remaining - 1;
             rank += 1;
         }
