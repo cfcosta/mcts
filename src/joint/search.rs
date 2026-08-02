@@ -8,9 +8,9 @@
 //! joint grid under common random numbers, warm-solve it, overwrite the
 //! node with the cold equilibrium, route deep or shallow, run the
 //! budget-gated descent loop on the deep path, and assemble the result.
-//! The convergence early-stop and the unlearned-simulation bail arrive
-//! with the convergence milestone; until then the descent loop always
-//! runs the transition budget dry.
+//! The descent loop stops early when the root's time-average policies
+//! hold still long enough to count as converged, or when 64 consecutive
+//! simulations fail to learn anything.
 
 use rand::RngCore;
 
@@ -21,8 +21,8 @@ use crate::joint::result::{
 };
 use crate::joint::rng::{next_f64, next_index, SplitMix64};
 use crate::joint::solver::{
-    argmax_first, chance_resample_probability, expansion_pairs, mixed_policy, policy_entropy,
-    sample_index, solve_node, solve_zero_sum_regret,
+    argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
+    policy_entropy, sample_index, solve_node, solve_zero_sum_regret,
 };
 use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvider};
 
@@ -538,6 +538,13 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     /// budget-gated descents from the root, then let a final cold
     /// equilibrium overwrite the node and become the result; on the
     /// shallow path the initial equilibrium is the result untouched.
+    ///
+    /// The loop stops before the budget when the root's time-average
+    /// policies move at most `convergence_tolerance` (L1, both sides) for
+    /// `convergence_patience` consecutive learned simulations — but only
+    /// once the minimum budget is spent and the descent has reached the
+    /// depth cap — or when 64 consecutive simulations learn nothing.
+    ///
     /// Change diagnostics are computed on both paths, the deep-search
     /// verdict only on the deep one. A divergence raised mid-descent
     /// abandons the tree's learning and returns the fallback, with the
@@ -559,7 +566,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     {
         let mut transitions = transitions;
         let mut simulations = 0u32;
-        let converged = false;
+        let mut converged = false;
         let (initial_player, initial_enemy, initial_value) = {
             let node = tree.node(node_id);
             (
@@ -568,6 +575,10 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                 node.root_value,
             )
         };
+        let mut previous_player = initial_player.clone();
+        let mut previous_enemy = initial_enemy.clone();
+        let mut stable_updates = 0u32;
+        let mut attempts_without_learning = 0u32;
         while run.adaptive_deep_selected && transitions < self.config.expansion_budget {
             let remaining = self.config.expansion_budget - transitions;
             match self.simulate(run, tree, ctx, node_id, 0, remaining) {
@@ -575,6 +586,41 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                     transitions += cost;
                     if learned {
                         simulations += 1;
+                        attempts_without_learning = 0;
+                        let node = tree.node(node_id);
+                        let current_player = average_policy(
+                            &node.player_strategy_sum,
+                            node.solve_count,
+                            &node.player_policy,
+                        );
+                        let current_enemy = average_policy(
+                            &node.enemy_strategy_sum,
+                            node.solve_count,
+                            &node.enemy_policy,
+                        );
+                        let change = l1_distance(&current_player, &previous_player)
+                            + l1_distance(&current_enemy, &previous_enemy);
+                        stable_updates = if change <= self.config.convergence_tolerance {
+                            stable_updates + 1
+                        } else {
+                            0
+                        };
+                        previous_player = current_player;
+                        previous_enemy = current_enemy;
+                        if transitions >= self.config.minimum_expansion_budget
+                            && run.max_depth_reached >= self.config.max_depth - 1
+                            && stable_updates >= self.config.convergence_patience
+                        {
+                            converged = true;
+                            break;
+                        }
+                    } else {
+                        attempts_without_learning += 1;
+                        // Hardcoded in Python: give up on a root whose
+                        // reachable frontier has stopped producing updates.
+                        if attempts_without_learning >= 64 {
+                            break;
+                        }
                     }
                 }
                 Err(divergence) => {

@@ -494,3 +494,413 @@ fn chance_resampling_accumulates_evidence_on_seen_pairs() {
     assert!(fullest_cell >= 2, "12 outcomes over 4 cells must stack");
     assert_joint_tree_invariants(&tree, &result, &config, "chance-resampling");
 }
+
+#[test]
+fn descent_converges_early_on_a_static_root() {
+    // On an all-zero matrix the time-average root policies are exactly
+    // uniform after every learned simulation, so the L1 change is 0.0
+    // and the stability streak grows by one per learned simulation. The
+    // streak reaches the patience of 8 on the 8th learned simulation —
+    // each a fresh draw costing one transition — so the loop converges
+    // at exactly 4 + 8 = 12 transitions independent of the seed, far
+    // short of the budget of 64.
+    let mut provider = MatrixProvider::new(2, vec![0.0; 4]);
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        expansion_budget: 64,
+        minimum_expansion_budget: 8,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 13);
+    let root = provider.root();
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        root,
+        SearchOptions::default(),
+    );
+
+    assert_eq!(result.failure, None);
+    assert!(result.diagnostics.tree_converged);
+    assert_eq!(result.transitions, 12);
+    assert_eq!(result.diagnostics.tree_simulations, 8);
+    assert_eq!(result.player_policy, vec![0.5, 0.5]);
+    assert_eq!(result.enemy_policy, vec![0.5, 0.5]);
+    assert_eq!(result.root_value, 0.0);
+    assert_eq!(result.exploitability, Some(0.0));
+    assert_eq!(result.diagnostics.deep_search_needed, Some(false));
+    // The install solve plus one warm solve per learned simulation.
+    assert_eq!(tree.root().solve_count, 144);
+    assert_joint_tree_invariants(&tree, &result, &config, "static-convergence");
+}
+
+#[test]
+fn descent_bails_after_sixty_four_unlearned_simulations() {
+    // Once every cell's evidence is deep, the resample probability sits
+    // at the 0.1 floor, so roughly nine of ten simulations reuse an
+    // existing outcome and learn nothing. Long before the huge budget
+    // is spent, 64 consecutive such simulations occur and the loop
+    // gives up. Convergence cannot be the exit: the minimum budget
+    // equals the never-reached full budget.
+    let mut provider = SeedSensitiveProvider;
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        expansion_budget: 4000,
+        minimum_expansion_budget: 4000,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 21);
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        SeedSensitiveProvider::root(),
+        SearchOptions::default(),
+    );
+
+    assert_eq!(result.failure, None);
+    assert!(!result.diagnostics.tree_converged);
+    assert!(
+        result.transitions < 4000,
+        "the bail must fire before the budget: {}",
+        result.transitions
+    );
+    assert!(result.transitions > 4, "some learning must happen first");
+    // Simulations learn exactly when they draw fresh outcomes (cost 1),
+    // so the learned count is the post-install transition count.
+    assert_eq!(result.diagnostics.tree_simulations, result.transitions - 4);
+    assert_joint_tree_invariants(&tree, &result, &config, "unlearned-bail");
+}
+
+#[test]
+fn mid_descent_divergence_discards_the_inflight_cost() {
+    // The provider survives the 4-step root install plus one descent
+    // step. The first simulation always resamples (evidence 1), spends
+    // that fifth success on a live stage outcome, and then tries to
+    // expand the newly created child — whose first step diverges. The
+    // failing simulation's in-flight cost is discarded exactly as in
+    // Python: transitions reports the install only, while the outcome
+    // pushed by the successful fifth step stays counted in
+    // chance_outcomes.
+    let mut provider = DivergeAfter::new(
+        TwoStage {
+            stage_matrix: vec![1.0, -1.0, -1.0, 1.0],
+            stage_potential: 0.0,
+            bail_value: None,
+        },
+        5,
+    );
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.25,
+    };
+    let config = JointSearchConfig {
+        expansion_budget: 24,
+        minimum_expansion_budget: 24,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config, 1);
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        TwoStage::root(),
+        SearchOptions::default(),
+    );
+
+    assert_eq!(result.solver, SolverTag::DivergenceFallbackV1);
+    assert!(result.failure.is_some());
+    assert_eq!(result.player_policy, vec![0.0, 0.0]);
+    assert_eq!(result.enemy_policy, vec![0.0, 0.0]);
+    assert_eq!(result.player_action, None);
+    assert_eq!(result.enemy_action, None);
+    assert_eq!(result.root_value, 0.25);
+    assert_eq!(result.transitions, 4);
+    assert_eq!(result.exploitability, None);
+    assert_eq!(result.payoff_matrix, None);
+
+    let diagnostics = &result.diagnostics;
+    assert_eq!(diagnostics.tree_simulations, 0);
+    assert_eq!(diagnostics.chance_outcomes, 5);
+    assert_eq!(diagnostics.tree_nodes, 1);
+    assert_eq!(diagnostics.root, None);
+    // The root keeps its installed learning; the stage child was created
+    // by the diverging simulation but never expanded.
+    assert_eq!(tree.nodes.len(), 2);
+    assert!(tree.root().expanded);
+    assert!(!tree.nodes[1].expanded);
+}
+
+#[test]
+fn adaptive_routes_shallow_when_depth_is_capped() {
+    let mut provider = MatrixProvider::new(2, vec![1.0, -1.0, -1.0, 1.0]);
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        adaptive_search: true,
+        expansion_budget: 8,
+        minimum_expansion_budget: 1,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 3);
+    let root = provider.root();
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        root,
+        SearchOptions::default(),
+    );
+
+    // max_depth 1 wins before every other predicate, including the high
+    // default router score.
+    assert_eq!(
+        result.diagnostics.adaptive_reason,
+        AdaptiveReason::ConfiguredRootOnly
+    );
+    assert!(!result.diagnostics.adaptive_deep_selected);
+    assert_eq!(result.diagnostics.adaptive_router_score, 1.0);
+    assert_eq!(result.transitions, 4);
+    assert_eq!(result.diagnostics.tree_simulations, 0);
+    assert_eq!(result.diagnostics.deep_search_needed, None);
+    assert_eq!(result.diagnostics.deep_policy_change, 0.0);
+    assert!(!result.diagnostics.deep_action_changed);
+    assert_eq!(result.player_policy, vec![0.5, 0.5]);
+    assert_eq!(result.enemy_policy, vec![0.5, 0.5]);
+    assert_eq!(result.exploitability, Some(0.0));
+    assert_eq!(tree.root().solve_count, 16);
+    assert_joint_tree_invariants(&tree, &result, &config, "adaptive-root-only");
+}
+
+#[test]
+fn adaptive_routes_deep_on_a_high_router_score() {
+    let mut provider = TwoStage {
+        stage_matrix: vec![1.0, -1.0, -1.0, 1.0],
+        stage_potential: 0.0,
+        bail_value: None,
+    };
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        adaptive_search: true,
+        expansion_budget: 16,
+        minimum_expansion_budget: 16,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 5);
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        TwoStage::root(),
+        SearchOptions::default(),
+    );
+
+    // The default router score of 1.0 clears the 0.55 threshold.
+    assert_eq!(
+        result.diagnostics.adaptive_reason,
+        AdaptiveReason::LearnedRouter
+    );
+    assert!(result.diagnostics.adaptive_deep_selected);
+    assert_eq!(result.diagnostics.adaptive_router_score, 1.0);
+    assert_eq!(result.transitions, 16);
+    assert!(result.diagnostics.tree_simulations > 0);
+    assert!(result.diagnostics.deep_search_needed.is_some());
+    assert_joint_tree_invariants(&tree, &result, &config, "adaptive-router-deep");
+}
+
+#[test]
+fn adaptive_routes_deep_on_online_exploitability() {
+    // Warm-solving matching pennies from lopsided priors leaves the
+    // 16th RM+ iterate far from equilibrium, so the online
+    // exploitability clears the 0.08 threshold and forces deep search
+    // even with a cold router.
+    let mut provider = MatrixProvider::new(2, vec![1.0, -1.0, -1.0, 1.0]);
+    let mut evaluator = FixedPriorEvaluator {
+        player_priors: vec![0.9, 0.1],
+        enemy_priors: vec![0.9, 0.1],
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        adaptive_search: true,
+        expansion_budget: 8,
+        minimum_expansion_budget: 8,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 7);
+    let root = provider.root();
+    let options = SearchOptions {
+        router_score: 0.0,
+        ..SearchOptions::default()
+    };
+    let (result, tree) = search.search_with_tree(&mut provider, &mut evaluator, root, options);
+
+    assert_eq!(
+        result.diagnostics.adaptive_reason,
+        AdaptiveReason::RootOnlineExploitability
+    );
+    assert!(result.diagnostics.adaptive_deep_selected);
+    assert_eq!(result.diagnostics.adaptive_router_score, 0.0);
+    let root_diagnostics = result.diagnostics.root.as_ref().expect("root diagnostics");
+    assert!(
+        root_diagnostics.online_exploitability >= 0.08,
+        "online exploitability: {}",
+        root_diagnostics.online_exploitability
+    );
+    assert_eq!(result.transitions, 8);
+    assert_joint_tree_invariants(&tree, &result, &config, "adaptive-exploitability");
+}
+
+#[test]
+fn adaptive_routes_deep_on_payoff_uncertainty() {
+    // Uniform-prior matching pennies warm-solves to exactly the uniform
+    // fixpoint, so the online exploitability of 0.0 skips the previous
+    // predicate. The payoff spread of 2 and the two-sided policy entropy
+    // of 2·ln 2 then trip the uncertainty predicate.
+    let mut provider = MatrixProvider::new(2, vec![1.0, -1.0, -1.0, 1.0]);
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        adaptive_search: true,
+        expansion_budget: 8,
+        minimum_expansion_budget: 8,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 9);
+    let root = provider.root();
+    let options = SearchOptions {
+        router_score: 0.0,
+        ..SearchOptions::default()
+    };
+    let (result, tree) = search.search_with_tree(&mut provider, &mut evaluator, root, options);
+
+    assert_eq!(
+        result.diagnostics.adaptive_reason,
+        AdaptiveReason::RootPayoffUncertainty
+    );
+    assert!(result.diagnostics.adaptive_deep_selected);
+    let root_diagnostics = result.diagnostics.root.as_ref().expect("root diagnostics");
+    assert_eq!(root_diagnostics.online_exploitability, 0.0);
+    assert_eq!(result.transitions, 8);
+    assert_joint_tree_invariants(&tree, &result, &config, "adaptive-uncertainty");
+}
+
+#[test]
+fn adaptive_forces_a_calibration_deep_sample() {
+    // A constant matrix defeats every informative predicate; a forced
+    // calibration fraction of 1.0 turns the budget coin into a
+    // certainty, since the coin is always below 1.
+    let mut provider = MatrixProvider::new(2, vec![0.0; 4]);
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        adaptive_search: true,
+        adaptive_force_deep_fraction: 1.0,
+        expansion_budget: 8,
+        minimum_expansion_budget: 8,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 11);
+    let root = provider.root();
+    let options = SearchOptions {
+        router_score: 0.0,
+        ..SearchOptions::default()
+    };
+    let (result, tree) = search.search_with_tree(&mut provider, &mut evaluator, root, options);
+
+    assert_eq!(
+        result.diagnostics.adaptive_reason,
+        AdaptiveReason::ForcedCalibrationSample
+    );
+    assert!(result.diagnostics.adaptive_deep_selected);
+    assert_eq!(result.transitions, 8);
+    assert_joint_tree_invariants(&tree, &result, &config, "adaptive-forced");
+}
+
+#[test]
+fn adaptive_stays_shallow_on_a_stable_root() {
+    // The same constant matrix with the forced fraction at 0.0: every
+    // deep predicate falls through and the root stays shallow, keeping
+    // the initial equilibrium as the result untouched.
+    let mut provider = MatrixProvider::new(2, vec![0.0; 4]);
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        adaptive_search: true,
+        adaptive_force_deep_fraction: 0.0,
+        expansion_budget: 8,
+        minimum_expansion_budget: 1,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 11);
+    let root = provider.root();
+    let options = SearchOptions {
+        router_score: 0.0,
+        ..SearchOptions::default()
+    };
+    let (result, tree) = search.search_with_tree(&mut provider, &mut evaluator, root, options);
+
+    assert_eq!(
+        result.diagnostics.adaptive_reason,
+        AdaptiveReason::RouterStableRoot
+    );
+    assert!(!result.diagnostics.adaptive_deep_selected);
+    assert_eq!(result.transitions, 4);
+    assert_eq!(result.diagnostics.tree_simulations, 0);
+    assert_eq!(result.diagnostics.deep_search_needed, None);
+    assert_eq!(result.player_policy, vec![0.5, 0.5]);
+    assert_eq!(result.enemy_policy, vec![0.5, 0.5]);
+    assert_eq!(tree.root().solve_count, 16);
+    assert_joint_tree_invariants(&tree, &result, &config, "adaptive-stable");
+}
+
+#[test]
+fn same_seed_deep_runs_are_identical() {
+    let run_once = || {
+        let mut provider = TwoStage {
+            stage_matrix: vec![1.0, -1.0, -1.0, 1.0],
+            stage_potential: 0.15,
+            bail_value: Some(-1.0),
+        };
+        let mut evaluator = FixedPriorEvaluator {
+            player_priors: vec![0.6, 0.4],
+            enemy_priors: vec![0.45, 0.55],
+            value: -0.2,
+        };
+        let config = JointSearchConfig {
+            expansion_budget: 24,
+            minimum_expansion_budget: 24,
+            max_depth: 3,
+            ..JointSearchConfig::default()
+        };
+        let mut search = SimultaneousTreeSearch::new(config, 31);
+        search.search(
+            &mut provider,
+            &mut evaluator,
+            TwoStage::root(),
+            SearchOptions::default(),
+        )
+    };
+    let first = run_once();
+    assert_eq!(first.failure, None);
+    assert!(first.diagnostics.tree_simulations > 0);
+    assert_eq!(run_once(), first);
+}
