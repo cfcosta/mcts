@@ -14,8 +14,8 @@ use mcts_rs::joint::{
     SolverTag,
 };
 use support::joint::{
-    DivergeAfter, FixedPriorEvaluator, MatrixProvider, RecordingProvider, ToySnapshot,
-    UniformEvaluator,
+    assert_joint_tree_invariants, DivergeAfter, FixedPriorEvaluator, MatrixProvider,
+    RecordingProvider, SeedSensitiveProvider, ToySnapshot, TwoStage, UniformEvaluator,
 };
 
 /// A config whose descent budget the root install always consumes, so the
@@ -317,4 +317,180 @@ fn constructing_with_an_invalid_config_panics() {
         ..JointSearchConfig::default()
     };
     SimultaneousTreeSearch::new(config, 0);
+}
+
+#[test]
+fn deep_search_corrects_a_pessimistic_leaf_estimate() {
+    // Root action 0 leads to a stage worth a flat 0.3, action 1 bails at
+    // -1. The evaluator insists every live state is worth -0.9, so the
+    // root-only equilibrium undervalues action 0; descending into the
+    // stage child replaces that estimate with backed-up 0.3 payoffs.
+    let mut provider = TwoStage {
+        stage_matrix: vec![0.3; 4],
+        stage_potential: 0.0,
+        bail_value: Some(-1.0),
+    };
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: -0.9,
+    };
+    let config = JointSearchConfig {
+        expansion_budget: 24,
+        minimum_expansion_budget: 24,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 3);
+    let options = SearchOptions {
+        sample_actions: false,
+        ..SearchOptions::default()
+    };
+    let (result, tree) =
+        search.search_with_tree(&mut provider, &mut evaluator, TwoStage::root(), options);
+
+    assert_eq!(result.failure, None);
+    assert_eq!(result.transitions, 24);
+    assert_eq!(result.player_action, Some(0));
+    assert!(
+        result.player_policy[0] > 0.8,
+        "player policy: {:?}",
+        result.player_policy
+    );
+    assert!(
+        result.root_value > -0.5,
+        "root value: {}",
+        result.root_value
+    );
+    assert_eq!(result.diagnostics.deep_search_needed, Some(true));
+    assert!(result.diagnostics.tree_simulations > 0);
+    assert_eq!(result.diagnostics.tree_max_depth, 1);
+    assert_eq!(result.diagnostics.tree_nodes, 2);
+    // Every root pair reaches the same stage snapshot: one shared child.
+    assert_eq!(tree.nodes.len(), 2);
+    assert_eq!(tree.nodes[1].snapshot.id, 1);
+    assert!(tree.nodes[1].expanded);
+    assert_joint_tree_invariants(&tree, &result, &config, "pessimistic-leaf");
+}
+
+#[test]
+fn budget_starved_descent_falls_back_to_the_leaf_estimate() {
+    // Budget 5 leaves exactly one transition after the 4-transition root
+    // install. That simulation resamples its pair (evidence 1 gives
+    // resample probability 1), creates the stage child, and must then
+    // refuse the child's 4-transition expansion: the child node exists
+    // but stays unexpanded, and the learned value is the shaped leaf.
+    let mut provider = TwoStage {
+        stage_matrix: vec![0.3; 4],
+        stage_potential: 0.0,
+        bail_value: None,
+    };
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: -0.9,
+    };
+    let config = JointSearchConfig {
+        expansion_budget: 5,
+        minimum_expansion_budget: 5,
+        max_depth: 2,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 17);
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        TwoStage::root(),
+        SearchOptions::default(),
+    );
+
+    assert_eq!(result.transitions, 5);
+    assert_eq!(result.diagnostics.tree_simulations, 1);
+    assert_eq!(result.diagnostics.tree_nodes, 1);
+    assert_eq!(result.diagnostics.tree_max_depth, 0);
+    assert_eq!(tree.nodes.len(), 2);
+    assert!(!tree.nodes[1].expanded);
+    assert_eq!(tree.nodes[1].visits, 0);
+    assert_eq!(tree.nodes[1].solve_count, 0);
+    // The install solve plus exactly one learned-simulation solve.
+    assert_eq!(tree.root().solve_count, 32);
+    assert_eq!(tree.root().visits, 1);
+    assert_joint_tree_invariants(&tree, &result, &config, "budget-starved");
+}
+
+#[test]
+fn potential_shapes_live_leaves_but_never_terminal_returns() {
+    // Live stage successors carry potential 0.35, so their installed
+    // value is clamp(0.9 + 0.35) = 1.0. The bail row ends immediately at
+    // 1.7, recorded raw: terminal returns are never shaped or clamped.
+    let mut provider = TwoStage {
+        stage_matrix: vec![0.0; 4],
+        stage_potential: 0.35,
+        bail_value: Some(1.7),
+    };
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.9,
+    };
+    let config = JointSearchConfig {
+        expansion_budget: 4,
+        minimum_expansion_budget: 1,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 29);
+    let options = SearchOptions {
+        sample_actions: false,
+        ..SearchOptions::default()
+    };
+    let (result, tree) =
+        search.search_with_tree(&mut provider, &mut evaluator, TwoStage::root(), options);
+
+    assert_eq!(result.transitions, 4);
+    assert_eq!(result.payoff_matrix, Some(vec![1.0, 1.0, 1.7, 1.7]));
+    assert_eq!(result.payoff_spread, Some(1.7 - 1.0));
+    assert_eq!(result.player_action, Some(1));
+    assert!(result.root_value > 1.5, "root value: {}", result.root_value);
+    let root = tree.root();
+    assert_eq!(root.outcomes_at(0, 0)[0].tactical_delta, 0.35);
+    assert_eq!(root.outcomes_at(0, 0)[0].leaf_value, 0.9);
+    assert_eq!(root.outcomes_at(1, 0)[0].tactical_delta, 0.0);
+    assert_eq!(root.outcomes_at(1, 0)[0].leaf_value, 1.7);
+    assert_joint_tree_invariants(&tree, &result, &config, "potential-shaping");
+}
+
+#[test]
+fn chance_resampling_accumulates_evidence_on_seen_pairs() {
+    // Every joint pair is terminal with a seed-parity payoff. After the
+    // 4-transition install, the descent loop must spend the remaining 8
+    // transitions re-drawing outcomes for already-seen pairs, stacking
+    // multiple outcomes into the same cells.
+    let mut provider = SeedSensitiveProvider;
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        expansion_budget: 12,
+        minimum_expansion_budget: 12,
+        ..JointSearchConfig::default()
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 41);
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        SeedSensitiveProvider::root(),
+        SearchOptions::default(),
+    );
+
+    assert_eq!(result.transitions, 12);
+    // Here a simulation learns exactly when it draws a fresh outcome, so
+    // the learned count is the 8 post-install transitions.
+    assert_eq!(result.diagnostics.tree_simulations, 8);
+    assert_eq!(result.diagnostics.tree_max_depth, 0);
+    let root = tree.root();
+    assert!(root.visits >= 8);
+    let fullest_cell = (0..2)
+        .flat_map(|player| (0..2).map(move |enemy| root.outcomes_at(player, enemy).len()))
+        .max()
+        .expect("the root grid is non-empty");
+    assert!(fullest_cell >= 2, "12 outcomes over 4 cells must stack");
+    assert_joint_tree_invariants(&tree, &result, &config, "chance-resampling");
 }

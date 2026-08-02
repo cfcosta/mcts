@@ -1,15 +1,16 @@
-//! The search driver: root installation and the equilibrium pipeline.
+//! The search driver: root installation, descent, and the equilibrium
+//! pipeline.
 //!
 //! This is the engine half of the port — the single-root path of the
 //! Python `search`/`search_many` plus `_expansion_spec`,
-//! `_install_expansion`, `_choose_adaptive_depth` and the assembly part
-//! of `_finish_root_frontier`: evaluate the root, install the full joint
-//! grid under common random numbers, warm-solve it, overwrite the node
-//! with the cold equilibrium, route deep or shallow, and assemble the
-//! result. The deep descent loop between routing and assembly arrives
-//! with the descent milestone; until then a deep-routed search proceeds
-//! straight to final assembly, which matches the full semantics whenever
-//! the root install already consumes the expansion budget.
+//! `_install_expansion`, `_simulate_frontier`, `_choose_adaptive_depth`
+//! and `_finish_root_frontier`: evaluate the root, install the full
+//! joint grid under common random numbers, warm-solve it, overwrite the
+//! node with the cold equilibrium, route deep or shallow, run the
+//! budget-gated descent loop on the deep path, and assemble the result.
+//! The convergence early-stop and the unlearned-simulation bail arrive
+//! with the convergence milestone; until then the descent loop always
+//! runs the transition budget dry.
 
 use rand::RngCore;
 
@@ -18,9 +19,10 @@ use crate::joint::node::{NodeId, Outcome, Tree, TreeNode};
 use crate::joint::result::{
     AdaptiveReason, Diagnostics, RootDiagnostics, SearchOptions, SearchResult, SolverTag,
 };
-use crate::joint::rng::{next_f64, SplitMix64};
+use crate::joint::rng::{next_f64, next_index, SplitMix64};
 use crate::joint::solver::{
-    argmax_first, expansion_pairs, policy_entropy, sample_index, solve_node, solve_zero_sum_regret,
+    argmax_first, chance_resample_probability, expansion_pairs, mixed_policy, policy_entropy,
+    sample_index, solve_node, solve_zero_sum_regret,
 };
 use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvider};
 
@@ -56,6 +58,9 @@ struct SearchRun {
     max_depth_reached: u32,
     sampled_joint_pairs: u32,
     possible_joint_pairs: u32,
+    /// The evaluator's value of the root, before any search: the value the
+    /// divergence fallback reports.
+    prior_value: f64,
     adaptive_deep_selected: bool,
     adaptive_router_score: f64,
     adaptive_reason: AdaptiveReason,
@@ -72,6 +77,7 @@ impl SearchRun {
             max_depth_reached: 0,
             sampled_joint_pairs: 0,
             possible_joint_pairs: 0,
+            prior_value: 0.0,
             adaptive_deep_selected: true,
             adaptive_router_score: 1.0,
             adaptive_reason: AdaptiveReason::Disabled,
@@ -80,6 +86,13 @@ impl SearchRun {
             deep_search_needed: None,
         }
     }
+}
+
+/// The provider and evaluator of one search call, bundled so the descent
+/// recursion threads a single handle.
+struct DriveContext<'a, P, E> {
+    provider: &'a mut P,
+    evaluator: &'a mut E,
 }
 
 impl SimultaneousTreeSearch<SplitMix64> {
@@ -121,6 +134,10 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
 
     /// Runs a search from `root` and returns the result.
     ///
+    /// Snapshots are cloned once when a sampled outcome becomes a child
+    /// node, so `Clone` should be cheap — snapshots are typically small
+    /// handles into the caller's state.
+    ///
     /// Panics when `root` is terminal — searching a finished position is
     /// a caller error, exactly as in Python.
     pub fn search<P, E>(
@@ -132,6 +149,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     ) -> SearchResult
     where
         P: TransitionProvider,
+        P::Snapshot: Clone,
         E: Evaluator<P::Snapshot>,
     {
         self.search_with_tree(provider, evaluator, root, options).0
@@ -148,6 +166,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     ) -> (SearchResult, Tree<P::Snapshot>)
     where
         P: TransitionProvider,
+        P::Snapshot: Clone,
         E: Evaluator<P::Snapshot>,
     {
         let action_count = evaluator.action_count();
@@ -158,15 +177,19 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         let mut tree = Tree::new(action_count);
         let mut run = SearchRun::new();
         let evaluation = evaluator.evaluate(&root);
-        let prior_value = evaluation.value;
+        run.prior_value = evaluation.value;
         let root_id = tree.make_node(root, evaluation, &self.config);
+        let mut ctx = DriveContext {
+            provider,
+            evaluator,
+        };
 
         // Root install: the full joint grid, exempt from the expansion
         // budget (the budget gates only the descent loop).
-        let transitions = match self.install_root(&mut run, &mut tree, root_id, provider, evaluator) {
+        let transitions = match self.expand_node(&mut run, &mut tree, &mut ctx, root_id, true) {
             Ok(transitions) => transitions,
             Err((divergence, steps)) => {
-                let result = self.fallback(&run, action_count, prior_value, steps, 0, divergence);
+                let result = self.fallback(&run, action_count, steps, 0, divergence);
                 return (result, tree);
             }
         };
@@ -191,24 +214,26 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         run.adaptive_deep_selected = reason.is_deep();
         run.adaptive_router_score = router_score;
         run.adaptive_reason = reason;
-        let result = self.finish_root(&mut run, &mut tree, root_id, transitions, options);
+        let result = self.finish_root(&mut run, &mut tree, &mut ctx, root_id, transitions, options);
         (result, tree)
     }
 
-    /// Expands the root over its full legal grid (`_expansion_spec` with
-    /// `full_matrix=True` plus the stepping the pipeline pools): one
-    /// chance seed per sample index shared across every pair — common
-    /// random numbers — drawn from the chance stream. On divergence,
-    /// returns the failing step's error and the number of step calls made
-    /// (Python reports the size of the whole pooled batch instead; this
-    /// deviation is deliberate and documented).
-    fn install_root<P, E>(
+    /// Expands a node over its joint grid (`_expand_frontier`): the full
+    /// legal grid for the budget-exempt root install, diagonal rotations
+    /// for nodes reached by descent. One chance seed per sample index is
+    /// drawn from the chance stream and shared across every pair — common
+    /// random numbers. On divergence, returns the failing step's error and
+    /// the number of step calls made; the root reports that count while
+    /// descent discards it, matching Python, which loses in-flight descent
+    /// cost but reports the whole pooled root batch (the root-side count
+    /// is a documented deviation).
+    fn expand_node<P, E>(
         &mut self,
         run: &mut SearchRun,
         tree: &mut Tree<P::Snapshot>,
+        ctx: &mut DriveContext<'_, P, E>,
         node_id: NodeId,
-        provider: &mut P,
-        evaluator: &mut E,
+        full_matrix: bool,
     ) -> Result<u32, (Divergence, u32)>
     where
         P: TransitionProvider,
@@ -219,7 +244,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             let pairs = expansion_pairs(
                 &node.player_legal,
                 &node.enemy_legal,
-                true,
+                full_matrix,
                 self.config.deeper_joint_rotations,
             );
             let seeds: Vec<u64> = (0..self.config.chance_samples_per_joint)
@@ -235,7 +260,10 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         let mut steps = 0u32;
         for &(player, enemy, seed) in &samples {
             steps += 1;
-            match provider.step(&tree.node(node_id).snapshot, player, enemy, seed) {
+            match ctx
+                .provider
+                .step(&tree.node(node_id).snapshot, player, enemy, seed)
+            {
                 Ok(successor) => successors.push(successor),
                 Err(divergence) => return Err((divergence, steps)),
             }
@@ -247,7 +275,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             .iter()
             .map(|successor| match successor.terminal_value() {
                 Some(value) => value,
-                None => evaluator.leaf_value(successor),
+                None => ctx.evaluator.leaf_value(successor),
             })
             .collect();
         Ok(self.install_expansion(run, tree, node_id, &samples, successors, &leaf_values))
@@ -309,6 +337,176 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         transitions
     }
 
+    /// The transition cost of expanding a node partially (`_joint_cost`).
+    fn joint_cost<S>(&self, node: &TreeNode<S>) -> u32 {
+        let pairs = expansion_pairs(
+            &node.player_legal,
+            &node.enemy_legal,
+            false,
+            self.config.deeper_joint_rotations,
+        );
+        u32::try_from(pairs.len()).expect("pair count fits u32")
+            * self.config.chance_samples_per_joint
+    }
+
+    /// One descent from a node (`_simulate_frontier`): sample a joint
+    /// action from the epsilon-mixed policies, take a fresh or reused
+    /// chance outcome, resolve its value terminally, at the depth cap, or
+    /// through the child node, and when the outcome taught us something,
+    /// re-record it and warm-solve the node on the way out. Returns
+    /// `(value, cost, learned)`; `cost` counts provider transitions.
+    fn simulate<P, E>(
+        &mut self,
+        run: &mut SearchRun,
+        tree: &mut Tree<P::Snapshot>,
+        ctx: &mut DriveContext<'_, P, E>,
+        node_id: NodeId,
+        depth: u32,
+        remaining: u32,
+    ) -> Result<(f64, u32, bool), Divergence>
+    where
+        P: TransitionProvider,
+        P::Snapshot: Clone,
+        E: Evaluator<P::Snapshot>,
+    {
+        run.max_depth_reached = run.max_depth_reached.max(depth);
+        let (player_policy, enemy_policy) = {
+            let node = tree.node_mut(node_id);
+            node.visits += 1;
+            let player = mixed_policy(
+                &node.player_policy,
+                &node.player_priors,
+                &node.player_legal,
+                node.visits,
+                self.config.exploration,
+            );
+            let enemy = mixed_policy(
+                &node.enemy_policy,
+                &node.enemy_priors,
+                &node.enemy_legal,
+                node.visits,
+                self.config.exploration,
+            );
+            (player, enemy)
+        };
+        let player_action = sample_index(&player_policy, &mut self.selection_rng);
+        let enemy_action = sample_index(&enemy_policy, &mut self.selection_rng);
+        let mut cost = 0u32;
+        let evidence = u32::try_from(
+            tree.node(node_id)
+                .outcomes_at(player_action, enemy_action)
+                .len(),
+        )
+        .expect("outcome count fits u32");
+        if evidence == 0 && remaining == 0 {
+            return Ok((tree.node(node_id).root_value, 0, false));
+        }
+        // Python's short-circuit order: no resample coin is drawn for an
+        // unseen pair or an exhausted budget.
+        let fresh = evidence == 0
+            || (remaining > 0
+                && next_f64(&mut self.selection_rng)
+                    < chance_resample_probability(evidence, self.config.chance_resample));
+        let outcome_index = if fresh {
+            // `_new_chance_outcome_frontier`: one fresh chance seed, one
+            // step, one evaluation, appended to the pair's outcome cell.
+            let seed = self.chance_rng.next_u64();
+            let successor = ctx.provider.step(
+                &tree.node(node_id).snapshot,
+                player_action,
+                enemy_action,
+                seed,
+            )?;
+            let leaf_value = match successor.terminal_value() {
+                Some(value) => value,
+                None => ctx.evaluator.leaf_value(&successor),
+            };
+            let node = tree.node_mut(node_id);
+            let tactical_delta = if successor.terminal_value().is_some() {
+                0.0
+            } else {
+                successor.potential() - node.snapshot.potential()
+            };
+            node.push_outcome(
+                player_action,
+                enemy_action,
+                Outcome {
+                    snapshot: successor,
+                    tactical_delta,
+                    leaf_value,
+                },
+            );
+            if evidence == 0 {
+                run.sampled_joint_pairs += 1;
+            }
+            run.chance_outcomes += 1;
+            cost = 1;
+            evidence as usize
+        } else {
+            next_index(&mut self.selection_rng, evidence as usize)
+        };
+        let (terminal, tactical_delta, leaf_value, successor_id) = {
+            let outcome = &tree.node(node_id).outcomes_at(player_action, enemy_action)[outcome_index];
+            (
+                outcome.snapshot.terminal_value(),
+                outcome.tactical_delta,
+                outcome.leaf_value,
+                outcome.snapshot.id(),
+            )
+        };
+        let (value, learned) = if let Some(terminal_value) = terminal {
+            (terminal_value, fresh)
+        } else if depth + 1 >= self.config.max_depth {
+            ((leaf_value + tactical_delta).clamp(-1.0, 1.0), fresh)
+        } else {
+            let child_id = match tree.node(node_id).children.get(&successor_id).copied() {
+                Some(child_id) => child_id,
+                None => {
+                    let successor = tree.node(node_id).outcomes_at(player_action, enemy_action)
+                        [outcome_index]
+                        .snapshot
+                        .clone();
+                    let evaluation = ctx.evaluator.evaluate(&successor);
+                    let child_id = tree.make_node(successor, evaluation, &self.config);
+                    tree.node_mut(node_id)
+                        .children
+                        .insert(successor_id, child_id);
+                    child_id
+                }
+            };
+            if !tree.node(child_id).expanded {
+                let expansion_cost = self.joint_cost(tree.node(child_id));
+                if cost + expansion_cost <= remaining {
+                    cost += self
+                        .expand_node(run, tree, ctx, child_id, false)
+                        .map_err(|(divergence, _)| divergence)?;
+                    run.max_depth_reached = run.max_depth_reached.max(depth + 1);
+                    (
+                        (tactical_delta + tree.node(child_id).root_value).clamp(-1.0, 1.0),
+                        true,
+                    )
+                } else {
+                    // Budget-starved: fall back to the shaped leaf value.
+                    ((leaf_value + tactical_delta).clamp(-1.0, 1.0), fresh)
+                }
+            } else {
+                let (child_value, child_cost, child_learned) =
+                    self.simulate(run, tree, ctx, child_id, depth + 1, remaining - cost)?;
+                cost += child_cost;
+                (
+                    (tactical_delta + child_value).clamp(-1.0, 1.0),
+                    fresh || child_learned,
+                )
+            }
+        };
+        if learned {
+            let node = tree.node_mut(node_id);
+            node.record_value(player_action, enemy_action, value);
+            solve_node(node, self.config.regret_iterations_per_update);
+        }
+        Ok((value, cost, learned))
+    }
+
     /// The deep/shallow routing predicate chain (`_choose_adaptive_depth`),
     /// in Python's exact order. The budget stream is drawn at most once,
     /// and only when every earlier predicate falls through.
@@ -336,20 +534,31 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         AdaptiveReason::RouterStableRoot
     }
 
-    /// The assembly part of `_finish_root_frontier`: on the deep path the
-    /// final cold equilibrium overwrites the node and becomes the result;
-    /// on the shallow path the initial equilibrium is the result. Change
-    /// diagnostics are computed on both paths, the deep-search verdict
-    /// only on the deep one.
-    fn finish_root<S: JointSnapshot>(
+    /// The root driver (`_finish_root_frontier`): on the deep path, run
+    /// budget-gated descents from the root, then let a final cold
+    /// equilibrium overwrite the node and become the result; on the
+    /// shallow path the initial equilibrium is the result untouched.
+    /// Change diagnostics are computed on both paths, the deep-search
+    /// verdict only on the deep one. A divergence raised mid-descent
+    /// abandons the tree's learning and returns the fallback, with the
+    /// diverging simulation's in-flight cost excluded from `transitions`
+    /// exactly as in Python.
+    fn finish_root<P, E>(
         &mut self,
         run: &mut SearchRun,
-        tree: &mut Tree<S>,
+        tree: &mut Tree<P::Snapshot>,
+        ctx: &mut DriveContext<'_, P, E>,
         node_id: NodeId,
         transitions: u32,
         options: SearchOptions,
-    ) -> SearchResult {
-        let simulations = 0u32;
+    ) -> SearchResult
+    where
+        P: TransitionProvider,
+        P::Snapshot: Clone,
+        E: Evaluator<P::Snapshot>,
+    {
+        let mut transitions = transitions;
+        let mut simulations = 0u32;
         let converged = false;
         let (initial_player, initial_enemy, initial_value) = {
             let node = tree.node(node_id);
@@ -359,9 +568,21 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
                 node.root_value,
             )
         };
-        // The budget-gated descent loop runs here once the descent
-        // milestone lands: simulate from the root, count learned
-        // simulations, track convergence streaks.
+        while run.adaptive_deep_selected && transitions < self.config.expansion_budget {
+            let remaining = self.config.expansion_budget - transitions;
+            match self.simulate(run, tree, ctx, node_id, 0, remaining) {
+                Ok((_, cost, learned)) => {
+                    transitions += cost;
+                    if learned {
+                        simulations += 1;
+                    }
+                }
+                Err(divergence) => {
+                    let action_count = tree.action_count;
+                    return self.fallback(run, action_count, transitions, simulations, divergence);
+                }
+            }
+        }
         let (player_policy, enemy_policy, final_value, exploitability) = if run.adaptive_deep_selected
         {
             let node = tree.node_mut(node_id);
@@ -474,7 +695,6 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         &self,
         run: &SearchRun,
         action_count: usize,
-        prior_value: f64,
         transitions: u32,
         simulations: u32,
         divergence: Divergence,
@@ -484,7 +704,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             enemy_policy: vec![0.0; action_count],
             player_action: None,
             enemy_action: None,
-            root_value: prior_value,
+            root_value: run.prior_value,
             transitions,
             solver: SolverTag::DivergenceFallbackV1,
             exploitability: None,
