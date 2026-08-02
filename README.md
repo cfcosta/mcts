@@ -15,6 +15,7 @@ A Rust implementation of the Monte Carlo Tree Search (MCTS) algorithm using an a
   - [Prerequisites](#prerequisites)
   - [Adding to Your Project](#adding-to-your-project)
   - [Running the Tic-Tac-Toe Example](#running-the-tic-tac-toe-example)
+  - [Running the Goofspiel Example](#running-the-goofspiel-example)
   - [Testing and Benchmarking](#testing-and-benchmarking)
 - [Implementation Details](#implementation-details)
   - [Arena Allocator](#arena-allocator)
@@ -62,6 +63,26 @@ git clone https://github.com/PaytonWebber/mcts-rs.git
 cd mcts-rs
 cargo run --example tic_tac_toe
 ```
+
+### Running the Goofspiel Example
+
+[Goofspiel](https://en.wikipedia.org/wiki/Goofspiel) (the Game of Pure
+Strategy) is the canonical benchmark for **simultaneous-move** search:
+both players secretly bid cards for a randomly revealed prize, and
+optimal play must randomize. The example plays a full game with the
+`joint` module's regret-matching tree search on both sides, printing the
+mixed bid distributions each turn:
+
+```bash
+cargo run --example goofspiel
+```
+
+It exercises every part of the joint search — seeded chance (the prize
+reveal), shrinking legal-action masks (the hands), and potential shaping
+(the running score lead) — in one self-contained file. Its rules are
+pinned by the hegel property suite in `tests/goofspiel_properties.rs`,
+which replays every game against an independent shadow bookkeeper and
+checks the search against exact game-theoretic anchors.
 
 ### Testing and Benchmarking
 
@@ -183,9 +204,10 @@ Searches are driven by `joint::SimultaneousTreeSearch`, are fully
 deterministic for a given seed, and return a `SearchResult` with policies,
 sampled or argmax actions, the root payoff matrix, and rich diagnostics.
 See the `src/joint/mod.rs` module documentation for the algorithm details
-and the list of deliberate deviations from the Python source, and
-`benches/joint.rs` (`cargo bench --bench joint`) for benchmarks of the
-solver and end-to-end search hot paths.
+and the list of deliberate deviations from the Python source,
+`examples/goofspiel.rs` for a complete integration of all three traits on
+a real game, and `benches/joint.rs` (`cargo bench --bench joint`) for
+benchmarks of the solver and end-to-end search hot paths.
 
 ## License
 
