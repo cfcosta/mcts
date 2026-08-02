@@ -1,3 +1,4 @@
+pub mod joint;
 pub mod mcts;
 pub mod state;
 
