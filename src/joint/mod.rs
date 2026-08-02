@@ -14,6 +14,7 @@ pub mod config;
 pub mod node;
 pub mod result;
 pub mod rng;
+pub mod search;
 pub mod solver;
 pub mod traits;
 
@@ -23,6 +24,7 @@ pub use result::{
     AdaptiveReason, Diagnostics, RootDiagnostics, SearchOptions, SearchResult, SolverTag,
 };
 pub use rng::SplitMix64;
+pub use search::SimultaneousTreeSearch;
 pub use solver::{
     argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
     normalized_prior, policy_entropy, sample_index, solve_node, solve_zero_sum_regret,

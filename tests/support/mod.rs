@@ -14,6 +14,7 @@ use rand::seq::SliceRandom;
 use rand::SeedableRng;
 
 pub mod games;
+pub mod joint;
 
 pub use games::{TicTacToe, UltimateTicTacToe};
 
