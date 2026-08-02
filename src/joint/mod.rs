@@ -11,15 +11,20 @@
 //! matrix solves have no representation in the [`crate::State`] trait.
 
 pub mod config;
+pub mod node;
 pub mod result;
 pub mod rng;
 pub mod solver;
 pub mod traits;
 
 pub use config::{ConfigError, JointSearchConfig};
+pub use node::{legal_from_priors, NodeId, Outcome, Tree, TreeNode};
 pub use result::{
     AdaptiveReason, Diagnostics, RootDiagnostics, SearchOptions, SearchResult, SolverTag,
 };
 pub use rng::SplitMix64;
-pub use solver::{normalized_prior, solve_zero_sum_regret};
+pub use solver::{
+    argmax_first, average_policy, chance_resample_probability, expansion_pairs, mixed_policy,
+    normalized_prior, policy_entropy, sample_index, solve_node, solve_zero_sum_regret,
+};
 pub use traits::{Divergence, Evaluation, Evaluator, JointSnapshot, TransitionProvider};
