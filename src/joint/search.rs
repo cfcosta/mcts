@@ -16,6 +16,7 @@ use rand::RngCore;
 
 use crate::joint::config::JointSearchConfig;
 use crate::joint::node::{NodeId, Outcome, Tree, TreeNode};
+use crate::joint::noise::apply_root_noise;
 use crate::joint::result::{
     AdaptiveReason, Diagnostics, RootDiagnostics, SearchOptions, SearchResult, SolverTag,
 };
@@ -37,6 +38,10 @@ use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvi
 /// [`SplitMix64`] rather than CPython's Mersenne Twister, so seeds do not
 /// reproduce Python runs — only Rust runs.
 ///
+/// A fourth stream, `noise`, has no Python counterpart: it feeds the
+/// opt-in Dirichlet root-noise extension exclusively, so enabling noise
+/// never shifts a draw on the ported streams.
+///
 /// The search object carries no per-call state: every [`search`] call is
 /// the Python pattern of a fresh search object reusing persistent RNGs.
 ///
@@ -47,6 +52,7 @@ pub struct SimultaneousTreeSearch<R: RngCore = SplitMix64> {
     selection_rng: R,
     chance_rng: R,
     budget_rng: R,
+    noise_rng: R,
 }
 
 /// Per-search bookkeeping: the Python search object's counters and
@@ -96,14 +102,17 @@ struct DriveContext<'a, P, E> {
 }
 
 impl SimultaneousTreeSearch<SplitMix64> {
-    /// Creates a search with three [`SplitMix64`] streams derived from one
-    /// seed. Panics when the configuration is invalid.
+    /// Creates a search with four [`SplitMix64`] streams derived from one
+    /// seed. The noise stream is drawn after the three ported streams, so
+    /// their per-seed traces are identical to builds that predate it.
+    /// Panics when the configuration is invalid.
     pub fn new(config: JointSearchConfig, seed: u64) -> Self {
         let mut seeder = SplitMix64::new(seed);
         let selection_rng = SplitMix64::new(seeder.next_u64());
         let chance_rng = SplitMix64::new(seeder.next_u64());
         let budget_rng = SplitMix64::new(seeder.next_u64());
-        Self::with_rngs(config, selection_rng, chance_rng, budget_rng)
+        let noise_rng = SplitMix64::new(seeder.next_u64());
+        Self::with_rngs(config, selection_rng, chance_rng, budget_rng, noise_rng)
     }
 }
 
@@ -116,6 +125,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         selection_rng: R,
         chance_rng: R,
         budget_rng: R,
+        noise_rng: R,
     ) -> Self {
         if let Err(error) = config.validate() {
             panic!("invalid search config: {error}");
@@ -125,6 +135,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             selection_rng,
             chance_rng,
             budget_rng,
+            noise_rng,
         }
     }
 
@@ -176,8 +187,21 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         );
         let mut tree = Tree::new(action_count);
         let mut run = SearchRun::new();
-        let evaluation = evaluator.evaluate(&root);
+        let mut evaluation = evaluator.evaluate(&root);
         run.prior_value = evaluation.value;
+        // Root noise perturbs the evaluation before the node exists, so
+        // the stored priors — the source of every legal-list derivation
+        // downstream — already carry it.
+        if let Some(noise) = self.config.root_noise {
+            apply_root_noise(
+                &mut evaluation,
+                root.player_mask(),
+                root.enemy_mask(),
+                noise,
+                self.config.max_actions_per_side,
+                &mut self.noise_rng,
+            );
+        }
         let root_id = tree.make_node(root, evaluation, &self.config);
         let mut ctx = DriveContext {
             provider,

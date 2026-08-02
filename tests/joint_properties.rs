@@ -28,7 +28,7 @@ use hegel::generators as gs;
 use hegel::TestCase;
 use mcts_rs::joint::{
     chance_resample_probability, legal_from_priors, mixed_policy, normalized_prior, solve_node,
-    solve_zero_sum_regret, Evaluation, JointSearchConfig, SearchOptions, SearchResult,
+    solve_zero_sum_regret, Evaluation, JointSearchConfig, RootNoise, SearchOptions, SearchResult,
     SimultaneousTreeSearch, SolverTag, Tree,
 };
 use support::joint::{
@@ -472,6 +472,7 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
     let expansion_budget: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(24));
     let max_actions_per_side: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(13));
     let prune: bool = tc.draw(gs::booleans());
+    let noisy: bool = tc.draw(gs::booleans());
     let config = JointSearchConfig {
         expansion_budget,
         minimum_expansion_budget: tc.draw(gs::integers::<u32>().min_value(1).max_value(24)),
@@ -487,6 +488,10 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
                 .min_value(1)
                 .max_value(max_actions_per_side),
         ),
+        root_noise: noisy.then(|| RootNoise {
+            epsilon: tc.draw(gs::floats::<f64>().min_value(0.05).max_value(1.0)),
+            alpha_scale: tc.draw(gs::floats::<f64>().min_value(0.05).max_value(20.0)),
+        }),
         exploration: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.5)),
         chance_resample: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
         convergence_tolerance: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.05)),

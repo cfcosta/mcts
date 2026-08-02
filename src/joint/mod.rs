@@ -17,8 +17,8 @@
 //! Python source, but the following differ deliberately:
 //!
 //! - **RNG.** Python uses three `random.Random` (Mersenne Twister)
-//!   instances; this port derives three [`SplitMix64`] streams from one
-//!   seed. Seeds therefore do not reproduce Python runs. The draw
+//!   instances; this port derives matching [`SplitMix64`] streams from
+//!   one seed. Seeds therefore do not reproduce Python runs. The draw
 //!   semantics are frozen in [`rng`]: floats take the top 53 bits of one
 //!   `next_u64`, and bounded indices use a widening multiply — neither
 //!   matches CPython's `random()` or `randrange` internals.
@@ -59,17 +59,29 @@
 //!   arXiv:2103.04931 — "Action Reduction"); production AlphaZero-style
 //!   engines restrict simultaneous-move nodes to the top ~99.5% of
 //!   cumulative prior mass.
+//! - **Seeded Dirichlet root noise**
+//!   ([`root_noise`](config::JointSearchConfig::root_noise)): the root
+//!   priors are blended with `(1 − ε)·prior + ε·Dirichlet(α)` before the
+//!   root node is built, with `α = alpha_scale / |legal|` per side —
+//!   AlphaZero's root exploration noise (Silver et al.,
+//!   arXiv:1712.01815), which keeps every root action explorable even
+//!   when the evaluator's priors dismiss it. The draws come from a
+//!   dedicated fourth rng stream appended after the ported three, so the
+//!   selection/chance/budget traces of any seed are unchanged whether or
+//!   not noise is enabled.
 
 pub mod config;
 pub mod node;
+pub mod noise;
 pub mod result;
 pub mod rng;
 pub mod search;
 pub mod solver;
 pub mod traits;
 
-pub use config::{ConfigError, JointSearchConfig};
+pub use config::{ConfigError, JointSearchConfig, RootNoise};
 pub use node::{legal_from_priors, truncate_to_prior_mass, NodeId, Outcome, Tree, TreeNode};
+pub use noise::{apply_root_noise, sample_dirichlet};
 pub use result::{
     AdaptiveReason, Diagnostics, RootDiagnostics, SearchOptions, SearchResult, SolverTag,
 };

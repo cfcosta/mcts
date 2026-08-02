@@ -6,6 +6,35 @@
 
 use std::fmt;
 
+/// Parameters of the seeded Dirichlet root-noise extension
+/// ([`JointSearchConfig::root_noise`]).
+///
+/// AlphaZero mixes `(1 − ε)·prior + ε·Dirichlet(α)` into the root priors
+/// so every root action keeps a positive exploration probability (Silver
+/// et al., arXiv:1712.01815). The concentration follows their inverse
+/// scaling with the move count — `α = alpha_scale / |legal|` per side —
+/// and the defaults reproduce their constants: ε = 0.25, and a scale of
+/// 10 giving α ≈ 0.3 at chess's ~35 legal moves.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RootNoise {
+    /// Noise share of the blended prior, validated to (0, 1]. Zero is
+    /// rejected rather than treated as off: renormalization would still
+    /// perturb the priors, so `None` is the only exact off switch.
+    pub epsilon: f64,
+    /// Numerator of the per-side concentration `alpha_scale / |legal|`,
+    /// validated to be finite and positive.
+    pub alpha_scale: f64,
+}
+
+impl Default for RootNoise {
+    fn default() -> Self {
+        Self {
+            epsilon: 0.25,
+            alpha_scale: 10.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct JointSearchConfig {
     /// Chance outcomes sampled per joint action pair during expansion.
@@ -50,6 +79,10 @@ pub struct JointSearchConfig {
     /// Fewest actions per side the mass cutoff may keep; consulted only
     /// when `prior_mass_cutoff` is set.
     pub minimum_actions_per_side: usize,
+    /// Opt-in extension: blend seeded Dirichlet noise into the root
+    /// priors before the root node is built. `None` (the default) leaves
+    /// the evaluator's priors untouched.
+    pub root_noise: Option<RootNoise>,
 }
 
 impl Default for JointSearchConfig {
@@ -74,6 +107,7 @@ impl Default for JointSearchConfig {
             adaptive_payoff_spread_threshold: 0.75,
             prior_mass_cutoff: None,
             minimum_actions_per_side: 2,
+            root_noise: None,
         }
     }
 }
@@ -191,6 +225,20 @@ impl JointSearchConfig {
                 });
             }
         }
+        if let Some(noise) = self.root_noise {
+            if !(noise.epsilon.is_finite() && noise.epsilon > 0.0 && noise.epsilon <= 1.0) {
+                return Err(ConfigError {
+                    field: "root_noise",
+                    requirement: "an epsilon within (0, 1]",
+                });
+            }
+            if !(noise.alpha_scale.is_finite() && noise.alpha_scale > 0.0) {
+                return Err(ConfigError {
+                    field: "root_noise",
+                    requirement: "a finite positive alpha_scale",
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -227,6 +275,7 @@ mod tests {
         let config = JointSearchConfig::default();
         assert_eq!(config.prior_mass_cutoff, None);
         assert_eq!(config.minimum_actions_per_side, 2);
+        assert_eq!(config.root_noise, None);
 
         // The floor only binds while the cutoff is enabled: existing
         // configs with small action caps stay valid.
@@ -241,7 +290,7 @@ mod tests {
 
     #[test]
     fn validate_reports_the_offending_field() {
-        let cases: [(&str, Mutation); 19] = [
+        let cases: [(&str, Mutation); 21] = [
             ("chance_samples_per_joint", |c| {
                 c.chance_samples_per_joint = 0
             }),
@@ -282,6 +331,18 @@ mod tests {
             ("minimum_actions_per_side", |c| {
                 c.prior_mass_cutoff = Some(0.5);
                 c.minimum_actions_per_side = c.max_actions_per_side + 1;
+            }),
+            ("root_noise", |c| {
+                c.root_noise = Some(RootNoise {
+                    epsilon: 0.0,
+                    ..RootNoise::default()
+                })
+            }),
+            ("root_noise", |c| {
+                c.root_noise = Some(RootNoise {
+                    alpha_scale: f64::NAN,
+                    ..RootNoise::default()
+                })
             }),
         ];
         for (field, mutate) in cases {
