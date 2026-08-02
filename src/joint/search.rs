@@ -23,8 +23,8 @@ use crate::joint::result::{
 use crate::joint::rng::{next_f64, next_index, SplitMix64};
 use crate::joint::solver::{
     argmax_first, average_policy_into, chance_resample_probability, expansion_pairs,
-    mixed_policy_into, policy_entropy, sample_index, solve_node_with_scratch, solve_zero_sum_regret,
-    strategy_weight_total, SolveScratch,
+    mixed_policy_into, policy_entropy, sample_index, solve_node_with_scratch,
+    solve_zero_sum_regret_with_tolerance, strategy_weight_total, SolveScratch,
 };
 use crate::joint::traits::{Divergence, Evaluator, JointSnapshot, TransitionProvider};
 
@@ -81,6 +81,11 @@ struct SearchRun {
     deep_policy_change: f64,
     deep_action_changed: bool,
     deep_search_needed: Option<bool>,
+    /// Iterations the most recent cold root equilibrium performed —
+    /// `regret_iterations`, or the checkpoint where the opt-in
+    /// tolerance stopped it. Written by every equilibrium before any
+    /// read (the divergence fallback carries no root diagnostics).
+    equilibrium_iterations: u32,
 }
 
 impl SearchRun {
@@ -98,6 +103,7 @@ impl SearchRun {
             deep_policy_change: 0.0,
             deep_action_changed: false,
             deep_search_needed: None,
+            equilibrium_iterations: 0,
         }
     }
 }
@@ -231,15 +237,17 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         {
             let node = tree.node_mut(root_id);
             node.online_exploitability = node.exploitability;
-            let (player_policy, enemy_policy, value, exploitability) = root_equilibrium(
+            let (player_policy, enemy_policy, value, exploitability, performed) = root_equilibrium(
                 node,
                 self.config.regret_iterations,
                 self.config.cfr_plus_solves,
+                self.config.equilibrium_tolerance,
             );
             node.player_policy = player_policy;
             node.enemy_policy = enemy_policy;
             node.root_value = value;
             node.exploitability = exploitability;
+            run.equilibrium_iterations = performed;
         }
         // Python records 1.0 for non-adaptive searches regardless of the
         // caller's score (the pooled router only scores adaptive roots).
@@ -592,6 +600,10 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
     /// budget-gated descents from the root, then let a final cold
     /// equilibrium overwrite the node and become the result; on the
     /// shallow path the initial equilibrium is the result untouched.
+    /// A deep path whose descents learned nothing skips the final
+    /// re-solve: the root matrix is untouched since the initial
+    /// equilibrium, so the re-solve would recompute the installed
+    /// policies, value, and exploitability bit for bit.
     ///
     /// The loop stops before the budget when the root's time-average
     /// policies move at most `convergence_tolerance` (L1, both sides) for
@@ -692,19 +704,27 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             }
         }
         let (player_policy, enemy_policy, final_value, exploitability) = if run.adaptive_deep_selected
+            && simulations > 0
         {
             let node = tree.node_mut(node_id);
-            let (player_policy, enemy_policy, value, exploitability) = root_equilibrium(
+            let (player_policy, enemy_policy, value, exploitability, performed) = root_equilibrium(
                 node,
                 self.config.regret_iterations,
                 self.config.cfr_plus_solves,
+                self.config.equilibrium_tolerance,
             );
             node.player_policy.clone_from(&player_policy);
             node.enemy_policy.clone_from(&enemy_policy);
             node.root_value = value;
             node.exploitability = exploitability;
+            run.equilibrium_iterations = performed;
             (player_policy, enemy_policy, value, exploitability)
         } else {
+            // Shallow roots keep the initial equilibrium by definition;
+            // deep roots with zero learned simulations keep it too —
+            // only `record_value` at the root changes its matrix, and
+            // that happens exclusively on learned simulations, so the
+            // skipped re-solve would reproduce these exact bits.
             let node = tree.node(node_id);
             (
                 initial_player.clone(),
@@ -743,7 +763,7 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
             run,
             simulations,
             converged,
-            Some(self.root_diagnostics(node)),
+            Some(self.root_diagnostics(run, node)),
         );
         SearchResult {
             player_policy,
@@ -761,14 +781,14 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
         }
     }
 
-    fn root_diagnostics<S>(&self, node: &TreeNode<S>) -> RootDiagnostics {
+    fn root_diagnostics<S>(&self, run: &SearchRun, node: &TreeNode<S>) -> RootDiagnostics {
         let joint_actions = node.player_legal.len() * node.enemy_legal.len();
         RootDiagnostics {
             joint_actions: u32::try_from(joint_actions).expect("joint actions fit u32"),
             solves: node.solve_count,
             online_exploitability: node.online_exploitability,
             final_exploitability: node.exploitability,
-            equilibrium_iterations: self.config.regret_iterations,
+            equilibrium_iterations: run.equilibrium_iterations,
         }
     }
 
@@ -828,13 +848,15 @@ impl<R: RngCore> SimultaneousTreeSearch<R> {
 }
 
 /// The cold equilibrium over a node's accumulated matrix
-/// (`_root_equilibrium`).
+/// (`_root_equilibrium`); the fifth returned element is the iteration
+/// count actually performed under the opt-in tolerance.
 fn root_equilibrium<S>(
     node: &TreeNode<S>,
     iterations: u32,
     cfr_plus: bool,
-) -> (Vec<f64>, Vec<f64>, f64, f64) {
-    solve_zero_sum_regret(
+    tolerance: Option<f64>,
+) -> (Vec<f64>, Vec<f64>, f64, f64, u32) {
+    solve_zero_sum_regret_with_tolerance(
         &node.payoff,
         node.action_count(),
         &node.player_priors,
@@ -843,6 +865,7 @@ fn root_equilibrium<S>(
         &node.enemy_legal,
         iterations,
         cfr_plus,
+        tolerance,
     )
 }
 

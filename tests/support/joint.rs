@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use mcts_rs::joint::{
     legal_from_priors, strategy_weight_total, truncate_to_prior_mass, Divergence, Evaluation,
     Evaluator, JointSearchConfig, JointSnapshot, SearchResult, SolverTag, TransitionProvider, Tree,
+    EQUILIBRIUM_CHECK_INTERVAL,
 };
 
 /// A snapshot with every trait answer stored as plain data.
@@ -709,10 +710,21 @@ pub fn assert_joint_tree_invariants<S: JointSnapshot>(
         root_diagnostics.final_exploitability, root.exploitability,
         "{ctx}: root final exploitability"
     );
-    assert_eq!(
-        root_diagnostics.equilibrium_iterations, config.regret_iterations,
-        "{ctx}: root equilibrium iterations"
-    );
+    let performed = root_diagnostics.equilibrium_iterations;
+    match config.equilibrium_tolerance {
+        None => assert_eq!(
+            performed, config.regret_iterations,
+            "{ctx}: root equilibrium iterations"
+        ),
+        Some(_) => assert!(
+            performed == config.regret_iterations
+                || (performed < config.regret_iterations
+                    && performed >= EQUILIBRIUM_CHECK_INTERVAL
+                    && performed.is_multiple_of(EQUILIBRIUM_CHECK_INTERVAL)),
+            "{ctx}: a tolerance-stopped equilibrium must stop on an \
+             interval-aligned checkpoint before the cap, got {performed}"
+        ),
+    }
 
     assert_eq!(
         result.player_policy, root.player_policy,

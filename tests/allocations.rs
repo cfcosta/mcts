@@ -32,9 +32,9 @@ use hegel::{generators as gs, TestCase};
 use mcts_rs::joint::{
     argmax_first, average_policy, average_policy_into, chance_resample_probability, expansion_pairs,
     mixed_policy, mixed_policy_into, normalized_prior, policy_entropy, rng::next_f64, sample_index,
-    solve_node, solve_node_with_scratch, solve_zero_sum_regret, strategy_weight_total, Evaluation,
-    JointSearchConfig, RootNoise, SearchOptions, SimultaneousTreeSearch, SolveScratch, SplitMix64,
-    Tree,
+    solve_node, solve_node_with_scratch, solve_zero_sum_regret, solve_zero_sum_regret_with_tolerance,
+    strategy_weight_total, Evaluation, JointSearchConfig, RootNoise, SearchOptions,
+    SimultaneousTreeSearch, SolveScratch, SplitMix64, Tree, EQUILIBRIUM_CHECK_INTERVAL,
 };
 use mcts_rs::{Bump, Mcts};
 use support::joint::{MatrixProvider, ToySnapshot, TwoStage, UniformEvaluator};
@@ -355,6 +355,75 @@ fn cold_solver_allocations_depend_only_on_the_legal_shape(tc: TestCase) {
     }
 }
 
+/// The tolerance extension's only allocation cost is the pair of
+/// lazily filled average-check buffers (`8·(P + E)` bytes), and only
+/// when the run is long enough to reach a checkpoint. A `None`
+/// tolerance, or a run of at most one check interval, keeps the plain
+/// cold profile — whether or not the stop ever fires.
+#[hegel::test(test_cases = 40)]
+fn tolerance_checks_add_only_the_two_average_buffers(tc: TestCase) {
+    let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(8));
+    let payoff = tc.draw(
+        gs::vecs(gs::floats::<f64>().min_value(-1.0).max_value(1.0))
+            .min_size(action_count * action_count)
+            .max_size(action_count * action_count),
+    );
+    let player_priors = draw_positive_priors(&tc, action_count);
+    let enemy_priors = draw_positive_priors(&tc, action_count);
+    let player_legal = draw_legal(&tc, action_count);
+    let enemy_legal = draw_legal(&tc, action_count);
+    let short_iterations: u32 = tc.draw(
+        gs::integers::<u32>()
+            .min_value(1)
+            .max_value(EQUILIBRIUM_CHECK_INTERVAL),
+    );
+    let long_iterations: u32 = tc.draw(
+        gs::integers::<u32>()
+            .min_value(EQUILIBRIUM_CHECK_INTERVAL + 1)
+            .max_value(192),
+    );
+    let tolerance: f64 = tc.draw(gs::floats::<f64>().min_value(1e-6).max_value(2.5));
+    let cfr_plus: bool = tc.draw(gs::booleans());
+
+    let base = cold_solver_expected(player_legal.len(), enemy_legal.len(), action_count);
+    let solve = |iterations: u32, tolerance: Option<f64>| {
+        measure(|| {
+            solve_zero_sum_regret_with_tolerance(
+                &payoff,
+                action_count,
+                &player_priors,
+                &enemy_priors,
+                &player_legal,
+                &enemy_legal,
+                iterations,
+                cfr_plus,
+                tolerance,
+            )
+        })
+        .0
+    };
+
+    assert_eq!(
+        solve(long_iterations, None),
+        base,
+        "a None tolerance keeps the cold profile"
+    );
+    assert_eq!(
+        solve(short_iterations, Some(tolerance)),
+        base,
+        "no checkpoint inside the run: cold profile"
+    );
+    let with_checks = (
+        base.0 + 2,
+        base.1 + 8 * (player_legal.len() + enemy_legal.len()) as u64,
+    );
+    assert_eq!(
+        solve(long_iterations, Some(tolerance)),
+        with_checks,
+        "checkpoints pay exactly the two average buffers"
+    );
+}
+
 /// The warm node solve's allocation profile is a closed-form function of
 /// the node shape alone: the first solve pays thirteen buffers,
 /// `8·(P·E + 5P + 5E + 2n)` bytes, and every later solve rewrites the
@@ -530,8 +599,12 @@ const COLD_SOLVE_13X13_2048: (u64, u64) = (15, 2808);
 const WARM_SOLVE_16_13X13_FIRST: (u64, u64) = (13, 2600);
 const WARM_SOLVE_16_13X13_REPEAT: (u64, u64) = (11, 2392);
 /// joint/root_only_13: a full root-only search call (169-cell install
-/// plus cold equilibrium plus result assembly).
-const ROOT_ONLY_13: (u64, u64) = (251, 94_724);
+/// plus cold equilibrium plus result assembly). With zero learned
+/// simulations the final root re-solve is skipped — the matrix never
+/// changed, so it would recompute the installed equilibrium bit for
+/// bit — trading the second cold solve's buffers for two policy
+/// clones; (251, 94_724) with the redundant re-solve.
+const ROOT_ONLY_13: (u64, u64) = (238, 92_124);
 /// joint/deep_two_stage_budget_320: a full deep search at the default
 /// transition budget — descent, resampling, convergence tracking, and
 /// one warm node solve per learned simulation. The engine-held solver
@@ -541,10 +614,13 @@ const ROOT_ONLY_13: (u64, u64) = (251, 94_724);
 /// equilibria, and result assembly.
 const DEEP_TWO_STAGE_BUDGET_320: (u64, u64) = (379, 59_204);
 /// The deep bench scenario with every opt-in extension stacked on
-/// (prior-mass cutoff, root noise, average-strategy policies, CFR+);
-/// (10_310, 227_492) before the scratch. The extensions add no
-/// per-solve buffers, only a different trajectory over the same budget.
-const DEEP_TWO_STAGE_ALL_EXTENSIONS: (u64, u64) = (396, 61_540);
+/// (prior-mass cutoff, root noise, average-strategy policies, CFR+,
+/// equilibrium tolerance); (10_310, 227_492) before the scratch,
+/// (396, 61_540) before the tolerance. The extensions add no per-solve
+/// buffers beyond the tolerance's two average-check buffers in each of
+/// the two cold equilibria (+4 allocations, +64 bytes at two legal
+/// actions per side), only a different trajectory over the same budget.
+const DEEP_TWO_STAGE_ALL_EXTENSIONS: (u64, u64) = (400, 61_604);
 
 #[test]
 fn cold_solve_bench_mirror_matches_its_pin() {
@@ -702,6 +778,7 @@ fn deep_search_with_every_extension_matches_its_pin() {
         root_noise: Some(RootNoise::default()),
         average_strategy_policies: true,
         cfr_plus_solves: true,
+        equilibrium_tolerance: Some(0.005),
         ..JointSearchConfig::default()
     };
     let first = measure_deep_two_stage(config.clone());

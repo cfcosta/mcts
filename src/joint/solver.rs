@@ -74,6 +74,55 @@ pub fn solve_zero_sum_regret(
     iterations: u32,
     cfr_plus: bool,
 ) -> (Vec<f64>, Vec<f64>, f64, f64) {
+    let (player_policy, enemy_policy, value, exploitability, _) =
+        solve_zero_sum_regret_with_tolerance(
+            payoff,
+            action_count,
+            player_priors,
+            enemy_priors,
+            player_legal,
+            enemy_legal,
+            iterations,
+            cfr_plus,
+            None,
+        );
+    (player_policy, enemy_policy, value, exploitability)
+}
+
+/// Iteration interval at which a tolerance-carrying solve inspects its
+/// time-average exploitability.
+pub const EQUILIBRIUM_CHECK_INTERVAL: u32 = 64;
+
+/// [`solve_zero_sum_regret`] with an optional early-termination
+/// tolerance (the
+/// [`equilibrium_tolerance`](crate::joint::config::JointSearchConfig::equilibrium_tolerance)
+/// extension); the fifth returned element is the number of iterations
+/// actually performed.
+///
+/// With `Some(tolerance)`, every [`EQUILIBRIUM_CHECK_INTERVAL`]-th
+/// iteration — except a final one, which stops regardless — computes
+/// the exploitability of the current time-average strategies, the
+/// exact expression the tail evaluates, and stops the loop once it is
+/// at most `tolerance`. The check reads the running sums into two
+/// dedicated buffers and writes nothing the iterations read, so a
+/// stopped solve returns bit for bit what a plain solve of `performed`
+/// iterations returns, and a tolerance no checkpoint meets — an
+/// unreachable one, or any non-finite garbage — leaves the full run
+/// bitwise untouched. With `None`, no checks happen and
+/// `performed == iterations`.
+// See `solve_zero_sum_regret` for the surface rationale.
+#[allow(clippy::too_many_arguments)]
+pub fn solve_zero_sum_regret_with_tolerance(
+    payoff: &[f64],
+    action_count: usize,
+    player_priors: &[f64],
+    enemy_priors: &[f64],
+    player_legal: &[usize],
+    enemy_legal: &[usize],
+    iterations: u32,
+    cfr_plus: bool,
+    tolerance: Option<f64>,
+) -> (Vec<f64>, Vec<f64>, f64, f64, u32) {
     assert!(iterations >= 1, "regret iterations must be positive");
     assert!(
         !player_legal.is_empty() && !enemy_legal.is_empty(),
@@ -106,6 +155,11 @@ pub fn solve_zero_sum_regret(
     let mut enemy = vec![0.0; enemy_len];
     let mut row_values = vec![0.0; player_len];
     let mut column_values = vec![0.0; enemy_len];
+    // Filled lazily on the first checkpoint, so a `None` tolerance or a
+    // short run never pays for them.
+    let mut player_average_check: Vec<f64> = Vec::new();
+    let mut enemy_average_check: Vec<f64> = Vec::new();
+    let mut performed = iterations;
     for iteration in 0..iterations {
         regret_strategy(&player_regrets, &player_prior, &mut player);
         regret_strategy(&enemy_regrets, &enemy_prior, &mut enemy);
@@ -145,9 +199,32 @@ pub fn solve_zero_sum_regret(
         for (regret, &column_value) in enemy_regrets.iter_mut().zip(&column_values) {
             *regret = (*regret + enemy_value - column_value).max(0.0);
         }
+        if let Some(tolerance) = tolerance {
+            let solved = iteration + 1;
+            if solved % EQUILIBRIUM_CHECK_INTERVAL == 0 && solved < iterations {
+                let weight_total = strategy_weight_total(cfr_plus, solved);
+                refill_average(&mut player_average_check, &player_sum, weight_total);
+                refill_average(&mut enemy_average_check, &enemy_sum, weight_total);
+                // Scratching `row_values`/`column_values` is invisible
+                // to the iterations: the next `mat_vec` overwrites every
+                // slot before reading it and `vec_mat` zero-fills first,
+                // as does the tail below.
+                mat_vec(&matrix, enemy_len, &enemy_average_check, &mut row_values);
+                vec_mat(
+                    &player_average_check,
+                    &matrix,
+                    enemy_len,
+                    &mut column_values,
+                );
+                if max_of(&row_values) - min_of(&column_values) <= tolerance {
+                    performed = solved;
+                    break;
+                }
+            }
+        }
     }
 
-    let weight_total = strategy_weight_total(cfr_plus, iterations);
+    let weight_total = strategy_weight_total(cfr_plus, performed);
     let player_average: Vec<f64> = player_sum.iter().map(|sum| sum / weight_total).collect();
     let enemy_average: Vec<f64> = enemy_sum.iter().map(|sum| sum / weight_total).collect();
     let mut player_policy = vec![0.0; action_count];
@@ -162,7 +239,13 @@ pub fn solve_zero_sum_regret(
     vec_mat(&player_average, &matrix, enemy_len, &mut column_values);
     let value = dot(&player_average, &row_values);
     let exploitability = max_of(&row_values) - min_of(&column_values);
-    (player_policy, enemy_policy, value, exploitability)
+    (
+        player_policy,
+        enemy_policy,
+        value,
+        exploitability,
+        performed,
+    )
 }
 
 /// Warm-started RM+ on a node's legal submatrix (`_solve_node`).
@@ -576,6 +659,14 @@ fn refill_copy(out: &mut Vec<f64>, values: &[f64]) {
     out.clear();
     out.reserve_exact(values.len());
     out.extend_from_slice(values);
+}
+
+/// Refills `out` with `sums / weight_total`, allocating like
+/// [`refill_gather`].
+fn refill_average(out: &mut Vec<f64>, sums: &[f64], weight_total: f64) {
+    out.clear();
+    out.reserve_exact(sums.len());
+    out.extend(sums.iter().map(|sum| sum / weight_total));
 }
 
 /// Scatters a compact legal-ordered `strategy` into the full-length

@@ -97,6 +97,22 @@
 //!   default. Not covered by the papers in the local corpus; grounded
 //!   directly in Tammelin's CFR+ note and its use in solving
 //!   heads-up limit hold'em (Bowling et al., Science 2015).
+//! - **Early-terminated root equilibria**
+//!   ([`equilibrium_tolerance`](config::JointSearchConfig::equilibrium_tolerance)):
+//!   the cold root equilibria check their time-average exploitability
+//!   every [`EQUILIBRIUM_CHECK_INTERVAL`](solver::EQUILIBRIUM_CHECK_INTERVAL)
+//!   iterations and stop at the first checkpoint at or under the
+//!   tolerance — solving to a target exploitability rather than a fixed
+//!   iteration count, the stopping rule under which CFR+ was deployed
+//!   (regret matching's exploitability bound decays as `O(1/√T)`, so
+//!   surplus iterations past the target are pure cost). A stopped solve
+//!   is bit-identical to truncating the fixed-iteration solve at that
+//!   checkpoint, and the performed count is surfaced in
+//!   [`RootDiagnostics::equilibrium_iterations`](result::RootDiagnostics::equilibrium_iterations).
+//!   `None` keeps the full ported run bitwise. Not covered by the
+//!   papers in the local corpus; grounded directly in Tammelin's CFR+
+//!   note (arXiv:1407.5042) and the target-exploitability solve of
+//!   heads-up limit hold'em (Bowling et al., Science 2015).
 
 pub mod config;
 pub mod node;
@@ -118,6 +134,7 @@ pub use search::SimultaneousTreeSearch;
 pub use solver::{
     argmax_first, average_policy, average_policy_into, chance_resample_probability, expansion_pairs,
     mixed_policy, mixed_policy_into, normalized_prior, policy_entropy, sample_index, solve_node,
-    solve_node_with_scratch, solve_zero_sum_regret, strategy_weight_total, SolveScratch,
+    solve_node_with_scratch, solve_zero_sum_regret, solve_zero_sum_regret_with_tolerance,
+    strategy_weight_total, SolveScratch, EQUILIBRIUM_CHECK_INTERVAL,
 };
 pub use traits::{Divergence, Evaluation, Evaluator, JointSnapshot, TransitionProvider};

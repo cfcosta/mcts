@@ -475,6 +475,7 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
     let max_actions_per_side: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(13));
     let prune: bool = tc.draw(gs::booleans());
     let noisy: bool = tc.draw(gs::booleans());
+    let tolerant: bool = tc.draw(gs::booleans());
     let config = JointSearchConfig {
         expansion_budget,
         minimum_expansion_budget: tc.draw(gs::integers::<u32>().min_value(1).max_value(24)),
@@ -496,6 +497,11 @@ fn draw_scenario(tc: &TestCase) -> Scenario {
         }),
         average_strategy_policies: tc.draw(gs::booleans()),
         cfr_plus_solves: tc.draw(gs::booleans()),
+        // The [8, 128] iteration grid crosses the check interval, so
+        // this covers runs with no checkpoint, stopped runs, and runs
+        // whose checks never fire.
+        equilibrium_tolerance: tolerant
+            .then(|| tc.draw(gs::floats::<f64>().min_value(0.001).max_value(2.5))),
         exploration: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.5)),
         chance_resample: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
         convergence_tolerance: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.05)),

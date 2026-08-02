@@ -3,7 +3,11 @@
 //! exactly representable; accumulated quantities use tolerances because
 //! this port sums sequentially while NumPy sums pairwise.
 
-use mcts_rs::joint::{normalized_prior, solve_zero_sum_regret};
+use hegel::{generators as gs, TestCase};
+use mcts_rs::joint::{
+    normalized_prior, solve_zero_sum_regret, solve_zero_sum_regret_with_tolerance,
+    EQUILIBRIUM_CHECK_INTERVAL,
+};
 
 /// Matching pennies: with uniform priors every RM+ iterate is the exact
 /// fixpoint (row values are exactly zero, regrets never grow), so the
@@ -182,4 +186,173 @@ fn repeat_solves_are_bitwise_identical() {
     assert!(exploitability_a >= -1e-9);
     assert!(exploitability_a < 0.05);
     assert!(player_a[0] > 0.0 && player_a[1] > 0.0);
+}
+
+// --- Tolerance laws (hegel) -----------------------------------------------
+
+fn bits(values: &[f64]) -> Vec<u64> {
+    values.iter().map(|value| value.to_bits()).collect()
+}
+
+fn draw_matrix(tc: &TestCase, action_count: usize) -> Vec<f64> {
+    tc.draw(
+        gs::vecs(gs::floats::<f64>().min_value(-1.0).max_value(1.0))
+            .min_size(action_count * action_count)
+            .max_size(action_count * action_count),
+    )
+}
+
+/// Draws a non-empty legal subset of `0..action_count`.
+fn draw_legal(tc: &TestCase, action_count: usize) -> Vec<usize> {
+    let mut legal: Vec<usize> = (0..action_count)
+        .filter(|_| tc.draw(gs::booleans()))
+        .collect();
+    if legal.is_empty() {
+        legal.push(
+            tc.draw(
+                gs::integers::<usize>()
+                    .min_value(0)
+                    .max_value(action_count - 1),
+            ),
+        );
+    }
+    legal
+}
+
+/// Priors for one side; a mass-free side exercises the uniform fallback
+/// of the prior normalization inside the solve.
+fn draw_priors(tc: &TestCase, action_count: usize) -> Vec<f64> {
+    if tc.draw(gs::booleans()) {
+        return vec![0.0; action_count];
+    }
+    tc.draw(
+        gs::vecs(gs::floats::<f64>().min_value(0.05).max_value(1.0))
+            .min_size(action_count)
+            .max_size(action_count),
+    )
+}
+
+/// A `None` tolerance is the plain solver bit for bit, with the full
+/// iteration count reported as performed: the convergence checks are
+/// pure reads that must not perturb a single intermediate.
+#[hegel::test(test_cases = 60)]
+fn tolerance_none_matches_the_plain_solver_bitwise(tc: TestCase) {
+    let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
+    let payoff = draw_matrix(&tc, action_count);
+    let player_legal = draw_legal(&tc, action_count);
+    let enemy_legal = draw_legal(&tc, action_count);
+    let player_priors = draw_priors(&tc, action_count);
+    let enemy_priors = draw_priors(&tc, action_count);
+    let iterations: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(320));
+    let cfr_plus: bool = tc.draw(gs::booleans());
+
+    let (player, enemy, value, exploitability) = solve_zero_sum_regret(
+        &payoff,
+        action_count,
+        &player_priors,
+        &enemy_priors,
+        &player_legal,
+        &enemy_legal,
+        iterations,
+        cfr_plus,
+    );
+    let (tolerant_player, tolerant_enemy, tolerant_value, tolerant_exploitability, performed) =
+        solve_zero_sum_regret_with_tolerance(
+            &payoff,
+            action_count,
+            &player_priors,
+            &enemy_priors,
+            &player_legal,
+            &enemy_legal,
+            iterations,
+            cfr_plus,
+            None,
+        );
+    assert_eq!(bits(&player), bits(&tolerant_player));
+    assert_eq!(bits(&enemy), bits(&tolerant_enemy));
+    assert_eq!(value.to_bits(), tolerant_value.to_bits());
+    assert_eq!(exploitability.to_bits(), tolerant_exploitability.to_bits());
+    assert_eq!(performed, iterations);
+}
+
+/// A tolerance stop is a bitwise truncation of the fixed-iteration
+/// solve: the outputs equal the plain solver run for exactly
+/// `performed` iterations, and `performed` is the first
+/// interval-aligned checkpoint whose time-average exploitability meets
+/// the tolerance — every earlier checkpoint's truncation still exceeds
+/// it.
+#[hegel::test(test_cases = 60)]
+fn tolerance_stops_are_bitwise_truncations_at_the_first_converged_checkpoint(tc: TestCase) {
+    let action_count: usize = tc.draw(gs::integers::<usize>().min_value(1).max_value(6));
+    let payoff = draw_matrix(&tc, action_count);
+    let player_legal = draw_legal(&tc, action_count);
+    let enemy_legal = draw_legal(&tc, action_count);
+    let player_priors = draw_priors(&tc, action_count);
+    let enemy_priors = draw_priors(&tc, action_count);
+    let iterations: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(320));
+    let cfr_plus: bool = tc.draw(gs::booleans());
+    let tolerance: f64 = tc.draw(gs::floats::<f64>().min_value(1e-4).max_value(2.5));
+
+    let (player, enemy, value, exploitability, performed) = solve_zero_sum_regret_with_tolerance(
+        &payoff,
+        action_count,
+        &player_priors,
+        &enemy_priors,
+        &player_legal,
+        &enemy_legal,
+        iterations,
+        cfr_plus,
+        Some(tolerance),
+    );
+    assert!(performed >= 1 && performed <= iterations);
+    if performed < iterations {
+        assert_eq!(
+            performed % EQUILIBRIUM_CHECK_INTERVAL,
+            0,
+            "an early stop must land on a checkpoint"
+        );
+        assert!(
+            exploitability <= tolerance,
+            "an early stop must meet the tolerance: {exploitability} vs {tolerance}"
+        );
+    }
+
+    let (truncated_player, truncated_enemy, truncated_value, truncated_exploitability) =
+        solve_zero_sum_regret(
+            &payoff,
+            action_count,
+            &player_priors,
+            &enemy_priors,
+            &player_legal,
+            &enemy_legal,
+            performed,
+            cfr_plus,
+        );
+    assert_eq!(bits(&player), bits(&truncated_player));
+    assert_eq!(bits(&enemy), bits(&truncated_enemy));
+    assert_eq!(value.to_bits(), truncated_value.to_bits());
+    assert_eq!(exploitability.to_bits(), truncated_exploitability.to_bits());
+
+    // Minimality: the checkpoint exploitability the stop rule reads is
+    // exactly the truncated run's, so every checkpoint before the stop
+    // must still have been above the tolerance.
+    let mut checkpoint = EQUILIBRIUM_CHECK_INTERVAL;
+    while checkpoint < performed {
+        let (_, _, _, early_exploitability) = solve_zero_sum_regret(
+            &payoff,
+            action_count,
+            &player_priors,
+            &enemy_priors,
+            &player_legal,
+            &enemy_legal,
+            checkpoint,
+            cfr_plus,
+        );
+        assert!(
+            early_exploitability > tolerance,
+            "checkpoint {checkpoint} already met the tolerance but the \
+             solve ran to {performed}"
+        );
+        checkpoint += EQUILIBRIUM_CHECK_INTERVAL;
+    }
 }

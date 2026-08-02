@@ -68,8 +68,8 @@ fn root_only_search_solves_the_installed_matrix() {
     assert!(diagnostics.adaptive_deep_selected);
     assert_eq!(diagnostics.adaptive_router_score, 1.0);
     assert_eq!(diagnostics.adaptive_reason, AdaptiveReason::Disabled);
-    // The final equilibrium re-solves an unchanged matrix, so it equals
-    // the initial one bitwise.
+    // Zero learned simulations leave the root matrix untouched, so the
+    // final re-solve is skipped and the initial equilibrium stands.
     assert_eq!(diagnostics.deep_policy_change, 0.0);
     assert!(!diagnostics.deep_action_changed);
     assert_eq!(diagnostics.deep_search_needed, Some(false));
@@ -93,6 +93,42 @@ fn root_only_search_solves_the_installed_matrix() {
             assert_eq!(node.outcomes_at(player, enemy).len(), 1);
         }
     }
+}
+
+/// The opt-in tolerance stops the cold equilibrium at the first
+/// interval-aligned checkpoint whose time-average already meets it.
+/// Matching pennies from uniform priors sits on the exact fixpoint from
+/// iteration one, so the stop fires at the very first check (iteration
+/// 64 of the configured 2048) and every output keeps its exact
+/// fixpoint value.
+#[test]
+fn equilibrium_tolerance_stops_at_the_first_checkpoint() {
+    let mut provider = MatrixProvider::new(2, vec![1.0, -1.0, -1.0, 1.0]);
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let config = JointSearchConfig {
+        equilibrium_tolerance: Some(0.5),
+        ..root_only_config(4)
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 7);
+    let root = provider.root();
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        root,
+        SearchOptions::default(),
+    );
+
+    assert_eq!(result.player_policy, vec![0.5, 0.5]);
+    assert_eq!(result.enemy_policy, vec![0.5, 0.5]);
+    assert_eq!(result.root_value, 0.0);
+    assert_eq!(result.exploitability, Some(0.0));
+    assert_eq!(result.failure, None);
+    let root_diagnostics = result.diagnostics.root.as_ref().expect("root diagnostics");
+    assert_eq!(root_diagnostics.equilibrium_iterations, 64);
+    assert_joint_tree_invariants(&tree, &result, &config, "tolerance stop");
 }
 
 #[test]

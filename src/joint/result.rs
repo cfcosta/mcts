@@ -105,7 +105,9 @@ pub struct RootDiagnostics {
     pub online_exploitability: f64,
     /// Exploitability of the root's final policy.
     pub final_exploitability: f64,
-    /// Iterations of the cold equilibrium solve (`regret_iterations`).
+    /// Iterations the last cold equilibrium solve actually ran: the
+    /// full `regret_iterations`, or the checkpoint where the opt-in
+    /// `equilibrium_tolerance` stopped it early.
     pub equilibrium_iterations: u32,
 }
 

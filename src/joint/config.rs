@@ -96,6 +96,19 @@ pub struct JointSearchConfig {
     /// linear weights globally across batches. `false` (the default)
     /// keeps the ported simultaneous uniform-average dynamics bitwise.
     pub cfr_plus_solves: bool,
+    /// Opt-in extension: the cold root equilibria stop early once their
+    /// time-average exploitability, checked every
+    /// [`EQUILIBRIUM_CHECK_INTERVAL`](crate::joint::solver::EQUILIBRIUM_CHECK_INTERVAL)
+    /// iterations, is at most this bound — solving to a target
+    /// exploitability instead of a fixed iteration count, as CFR+
+    /// deployments do (Tammelin, arXiv:1407.5042; Bowling et al.,
+    /// Science 2015). A stopped solve is bit-identical to a
+    /// `regret_iterations`-capped solve truncated at the stopping
+    /// checkpoint, and the performed count is surfaced in
+    /// [`RootDiagnostics::equilibrium_iterations`](crate::joint::result::RootDiagnostics::equilibrium_iterations).
+    /// `None` (the default) always runs the full `regret_iterations`
+    /// bitwise.
+    pub equilibrium_tolerance: Option<f64>,
 }
 
 impl Default for JointSearchConfig {
@@ -123,6 +136,7 @@ impl Default for JointSearchConfig {
             root_noise: None,
             average_strategy_policies: false,
             cfr_plus_solves: false,
+            equilibrium_tolerance: None,
         }
     }
 }
@@ -254,6 +268,14 @@ impl JointSearchConfig {
                 });
             }
         }
+        if let Some(tolerance) = self.equilibrium_tolerance {
+            if !(tolerance.is_finite() && tolerance > 0.0) {
+                return Err(ConfigError {
+                    field: "equilibrium_tolerance",
+                    requirement: "finite and positive",
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -293,6 +315,7 @@ mod tests {
         assert_eq!(config.root_noise, None);
         assert!(!config.average_strategy_policies);
         assert!(!config.cfr_plus_solves);
+        assert_eq!(config.equilibrium_tolerance, None);
 
         // The floor only binds while the cutoff is enabled: existing
         // configs with small action caps stay valid.
@@ -307,7 +330,7 @@ mod tests {
 
     #[test]
     fn validate_reports_the_offending_field() {
-        let cases: [(&str, Mutation); 21] = [
+        let cases: [(&str, Mutation); 24] = [
             ("chance_samples_per_joint", |c| {
                 c.chance_samples_per_joint = 0
             }),
@@ -360,6 +383,15 @@ mod tests {
                     alpha_scale: f64::NAN,
                     ..RootNoise::default()
                 })
+            }),
+            ("equilibrium_tolerance", |c| {
+                c.equilibrium_tolerance = Some(0.0)
+            }),
+            ("equilibrium_tolerance", |c| {
+                c.equilibrium_tolerance = Some(-0.01)
+            }),
+            ("equilibrium_tolerance", |c| {
+                c.equilibrium_tolerance = Some(f64::NAN)
             }),
         ];
         for (field, mutate) in cases {

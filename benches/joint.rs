@@ -9,6 +9,9 @@
 //! - `joint/deep_two_stage_budget_320`: an end-to-end deep search at the
 //!   default transition budget, exercising descent, resampling, and the
 //!   convergence machinery.
+//! - `joint/deep_two_stage_tolerance`: the same deep search with the
+//!   opt-in `equilibrium_tolerance`, letting the two cold equilibria
+//!   stop at their first converged checkpoint.
 //!
 //! Run with `cargo bench --bench joint`.
 
@@ -144,11 +147,40 @@ fn bench_deep_two_stage(c: &mut Criterion) {
     });
 }
 
+fn bench_deep_two_stage_tolerance(c: &mut Criterion) {
+    let config = JointSearchConfig {
+        max_depth: 3,
+        equilibrium_tolerance: Some(0.005),
+        ..JointSearchConfig::default()
+    };
+    c.bench_function("joint/deep_two_stage_tolerance", |b| {
+        b.iter(|| {
+            let mut provider = TwoStage {
+                stage_matrix: vec![1.0, -1.0, -1.0, 1.0],
+                stage_potential: 0.15,
+                bail_value: Some(-1.0),
+            };
+            let mut evaluator = UniformEvaluator {
+                action_count: 2,
+                value: -0.2,
+            };
+            let mut search = SimultaneousTreeSearch::new(config.clone(), 23);
+            black_box(search.search(
+                &mut provider,
+                &mut evaluator,
+                TwoStage::root(),
+                SearchOptions::default(),
+            ))
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_cold_solve,
     bench_warm_solve,
     bench_root_only,
-    bench_deep_two_stage
+    bench_deep_two_stage,
+    bench_deep_two_stage_tolerance
 );
 criterion_main!(benches);
