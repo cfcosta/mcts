@@ -14,7 +14,7 @@ use mcts_rs::joint::{
     SolverTag,
 };
 use support::joint::{
-    assert_joint_tree_invariants, DivergeAfter, FixedPriorEvaluator, MatrixProvider,
+    assert_joint_tree_invariants, DeepChain, DivergeAfter, FixedPriorEvaluator, MatrixProvider,
     RecordingProvider, SeedSensitiveProvider, ToySnapshot, TwoStage, UniformEvaluator,
 };
 
@@ -938,4 +938,44 @@ fn same_seed_deep_runs_are_identical() {
     assert_eq!(first.failure, None);
     assert!(first.diagnostics.tree_simulations > 0);
     assert_eq!(run_once(), first);
+}
+
+/// The exact configuration and seed of the `joint/deep_chain_256`
+/// benchmark, pinned so the bench keeps measuring what it claims: a
+/// descent that genuinely saturates all 256 levels within its budget.
+/// The parametric saturation law lives in the hegel property suite;
+/// this fixed pin exists because at 256 plies saturation depends on the
+/// default resample rate — an adversarial rate would exhaust any budget
+/// on resampling before reaching the horizon.
+#[test]
+fn deep_chain_bench_workload_saturates_its_256_level_horizon() {
+    let config = JointSearchConfig {
+        max_depth: 256,
+        expansion_budget: 16_384,
+        minimum_expansion_budget: 1,
+        ..JointSearchConfig::default()
+    };
+    let mut provider = DeepChain { action_count: 2 };
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: 0.0,
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), 29);
+    let root = provider.root();
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        root,
+        SearchOptions::default(),
+    );
+
+    assert_eq!(result.failure, None);
+    assert_eq!(result.diagnostics.tree_max_depth, 255);
+    assert_eq!(result.diagnostics.tree_nodes, 256);
+    assert!(
+        result.transitions < config.expansion_budget,
+        "budget must not be the binding stop: {} transitions",
+        result.transitions
+    );
+    assert_joint_tree_invariants(&tree, &result, &config, "deep chain bench");
 }

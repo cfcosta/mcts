@@ -270,6 +270,43 @@ impl TransitionProvider for SeedSensitiveProvider {
     }
 }
 
+/// An endless chain: every joint action from every position advances to
+/// the same successor one step deeper, and no position is ever terminal.
+/// All cells of a node share one child, so the tree is a single spine
+/// and nothing but the configured depth horizon can stop the descent —
+/// the joint-search counterpart of the UCT suites' `ChainGame`, built
+/// for measuring and pinning pure descent depth.
+#[derive(Debug)]
+pub struct DeepChain {
+    pub action_count: usize,
+}
+
+impl DeepChain {
+    /// The root snapshot: all actions legal on both sides, depth 0.
+    pub fn root(&self) -> ToySnapshot {
+        let mask = (1u64 << self.action_count) - 1;
+        ToySnapshot::live(0, mask, mask)
+    }
+}
+
+impl TransitionProvider for DeepChain {
+    type Snapshot = ToySnapshot;
+
+    fn step(
+        &mut self,
+        parent: &ToySnapshot,
+        _player_action: usize,
+        _enemy_action: usize,
+        _chance_seed: u64,
+    ) -> Result<ToySnapshot, Divergence> {
+        Ok(ToySnapshot::live(
+            parent.id + 1,
+            parent.player_mask,
+            parent.enemy_mask,
+        ))
+    }
+}
+
 /// Uniform priors over every action and one fixed value everywhere.
 #[derive(Debug)]
 pub struct UniformEvaluator {

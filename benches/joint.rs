@@ -12,6 +12,12 @@
 //! - `joint/deep_two_stage_tolerance`: the same deep search with the
 //!   opt-in `equilibrium_tolerance`, letting the two cold equilibria
 //!   stop at their first converged checkpoint.
+//! - `joint/deep_chain_256`: an end-to-end search down an endless
+//!   two-action chain with a 256-ply depth horizon. Every level shares
+//!   one child, so the cost is pure descent depth: ~255 progressively
+//!   deeper simulations, each solving every node it touches. The
+//!   workload is pinned by `deep_chain_bench_workload_saturates_its_
+//!   256_level_horizon` in `tests/joint_behavior.rs`.
 //!
 //! Run with `cargo bench --bench joint`.
 
@@ -25,7 +31,7 @@ use mcts_rs::joint::{
 
 #[path = "../tests/support/mod.rs"]
 mod support;
-use support::joint::{MatrixProvider, ToySnapshot, TwoStage, UniformEvaluator};
+use support::joint::{DeepChain, MatrixProvider, ToySnapshot, TwoStage, UniformEvaluator};
 
 /// A deterministic payoff matrix with entries in [-1, 1].
 fn pseudo_matrix(action_count: usize, seed: u64) -> Vec<f64> {
@@ -175,12 +181,44 @@ fn bench_deep_two_stage_tolerance(c: &mut Criterion) {
     });
 }
 
+fn bench_deep_chain(c: &mut Criterion) {
+    let config = JointSearchConfig {
+        max_depth: 256,
+        expansion_budget: 16_384,
+        minimum_expansion_budget: 1,
+        ..JointSearchConfig::default()
+    };
+    let mut group = c.benchmark_group("joint");
+    // Each iteration is a full ~255-simulation search, far heavier than
+    // the other benches; fewer samples keep the run time reasonable.
+    group.sample_size(10);
+    group.bench_function("deep_chain_256", |b| {
+        b.iter(|| {
+            let mut provider = DeepChain { action_count: 2 };
+            let mut evaluator = UniformEvaluator {
+                action_count: 2,
+                value: 0.0,
+            };
+            let mut search = SimultaneousTreeSearch::new(config.clone(), 29);
+            let root = provider.root();
+            black_box(search.search(
+                &mut provider,
+                &mut evaluator,
+                root,
+                SearchOptions::default(),
+            ))
+        });
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_cold_solve,
     bench_warm_solve,
     bench_root_only,
     bench_deep_two_stage,
-    bench_deep_two_stage_tolerance
+    bench_deep_two_stage_tolerance,
+    bench_deep_chain
 );
 criterion_main!(benches);

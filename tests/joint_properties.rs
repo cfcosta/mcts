@@ -14,8 +14,9 @@
 //! - **Structural oracle**: random end-to-end searches over random
 //!   providers, configurations, and seeds must uphold every check in
 //!   `assert_joint_tree_invariants`, must be bitwise deterministic under
-//!   a fixed seed, and must degrade to the documented fallback shape on
-//!   provider divergence.
+//!   a fixed seed, must degrade to the documented fallback shape on
+//!   provider divergence, and must saturate exactly the configured depth
+//!   horizon on an endless chain.
 //!
 //! The exact characterization suites (`joint_solver`, `joint_node`,
 //! `joint_behavior`, `joint_tree_invariants`) pin the search's semantics
@@ -31,8 +32,8 @@ use mcts_rs::joint::{
     SimultaneousTreeSearch, SolverTag, Tree,
 };
 use support::joint::{
-    assert_joint_tree_invariants, DivergeAfter, FixedPriorEvaluator, MatrixProvider,
-    SeedSensitiveProvider, ToySnapshot, TwoStage,
+    assert_joint_tree_invariants, DeepChain, DivergeAfter, FixedPriorEvaluator, MatrixProvider,
+    SeedSensitiveProvider, ToySnapshot, TwoStage, UniformEvaluator,
 };
 
 // ---------------------------------------------------------------------------
@@ -630,4 +631,50 @@ fn divergence_anywhere_degrades_to_the_fallback_shape(tc: TestCase) {
     } else {
         assert_joint_tree_invariants(&tree, &result, &scenario.config, "hegel divergence");
     }
+}
+
+/// A game that never terminates leaves the depth horizon as the only
+/// thing that can stop the descent: with budget to spare, the search
+/// must drive the chain's single spine of shared children to exactly
+/// `max_depth - 1` — one node per level, none beyond — no matter how
+/// selection, resampling, or patience randomize the path there.
+#[hegel::test(test_cases = 64)]
+fn endless_chain_saturates_exactly_its_depth_horizon(tc: TestCase) {
+    let max_depth: u32 = tc.draw(gs::integers::<u32>().min_value(1).max_value(32));
+    let config = JointSearchConfig {
+        max_depth,
+        expansion_budget: 8192,
+        minimum_expansion_budget: 1,
+        chance_samples_per_joint: tc.draw(gs::integers::<u32>().min_value(1).max_value(2)),
+        deeper_joint_rotations: tc.draw(gs::integers::<usize>().min_value(1).max_value(3)),
+        exploration: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(0.5)),
+        chance_resample: tc.draw(gs::floats::<f64>().min_value(0.0).max_value(1.0)),
+        convergence_patience: tc.draw(gs::integers::<u32>().min_value(1).max_value(8)),
+        ..JointSearchConfig::default()
+    };
+    let mut provider = DeepChain { action_count: 2 };
+    let mut evaluator = UniformEvaluator {
+        action_count: 2,
+        value: tc.draw(gs::floats::<f64>().min_value(-1.0).max_value(1.0)),
+    };
+    let mut search = SimultaneousTreeSearch::new(config.clone(), tc.draw(gs::integers::<u64>()));
+    let root = provider.root();
+    let (result, tree) = search.search_with_tree(
+        &mut provider,
+        &mut evaluator,
+        root,
+        SearchOptions::default(),
+    );
+
+    assert!(result.failure.is_none(), "an endless chain cannot diverge");
+    assert_eq!(
+        result.diagnostics.tree_max_depth,
+        max_depth - 1,
+        "the depth horizon must be saturated exactly"
+    );
+    assert_eq!(
+        result.diagnostics.tree_nodes, max_depth,
+        "the spine must hold exactly one node per level"
+    );
+    assert_joint_tree_invariants(&tree, &result, &config, "endless chain");
 }
