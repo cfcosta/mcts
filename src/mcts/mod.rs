@@ -64,6 +64,19 @@ pub struct Mcts<'b, S: State> {
 impl<'b, S: State + std::fmt::Debug + std::clone::Clone> Mcts<'b, S> {
     /// Creates a search tree rooted at `state`, allocating nodes in `bump`.
     ///
+    /// `c` is the UCT exploration constant weighting the `√(ln N / n)`
+    /// bonus in [`search`](Self::search)'s selection rule. For rewards in
+    /// `[0, 1]`, `c = 1/√2 ≈ 0.7071` is the provably optimal choice from
+    /// Kocsis & Szepesvári's UCT analysis (as surveyed in Kemmerling et
+    /// al., arXiv:2303.08060) — the constant that preserves the UCB1
+    /// regret bound behind UCT's convergence guarantee. Rewards on
+    /// another scale need `c` rescaled proportionally to the reward
+    /// range to keep the bonus comparable to the value gaps
+    /// [`State::reward`] produces — e.g. `√2` for the `[-1, 1]`
+    /// win/loss convention this crate's example games use. The best
+    /// empirical value remains domain-dependent; treat the scaled
+    /// `1/√2` as the principled default, not a universal optimum.
+    ///
     /// Callers running repeated searches should keep one [`Bump`] alive and
     /// [`reset`](Bump::reset) it between searches, once the `Mcts` is
     /// dropped: the arena then reuses its retained chunk and steady-state
