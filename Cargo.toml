@@ -22,6 +22,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "mcts"
 harness = false
 
+[[bench]]
+name = "joint"
+harness = false
+
 # Whole-program optimization: with the entire search monomorphized into
 # one unit, LLVM can inline and lay out the hot loop globally instead of
 # per codegen unit. Panics keep unwinding — the contract tests assert on

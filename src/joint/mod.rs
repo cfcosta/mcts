@@ -9,6 +9,39 @@
 //! This module is a sibling of the classic [`crate::Mcts`] UCT search —
 //! the two share nothing: joint actions, priors, seeded chance, and
 //! matrix solves have no representation in the [`crate::State`] trait.
+//!
+//! # Deviations from the Python implementation
+//!
+//! The port is algorithm-equivalent, not bit-exact. Every equation,
+//! control-flow branch, draw order, and RNG stream assignment matches the
+//! Python source, but the following differ deliberately:
+//!
+//! - **RNG.** Python uses three `random.Random` (Mersenne Twister)
+//!   instances; this port derives three [`SplitMix64`] streams from one
+//!   seed. Seeds therefore do not reproduce Python runs. The draw
+//!   semantics are frozen in [`rng`]: floats take the top 53 bits of one
+//!   `next_u64`, and bounded indices use a widening multiply — neither
+//!   matches CPython's `random()` or `randrange` internals.
+//! - **Chance seeds** are full `u64` draws; Python uses
+//!   `getrandbits(63)`.
+//! - **Naming.** The Python result field `nodes` is
+//!   [`SearchResult::transitions`](result::SearchResult::transitions),
+//!   which is what it counts.
+//! - **Config.** `inference_batch_size` (a batching concern of the
+//!   subprocess protocol) and `redundant_action_prior_scale` (pre-search
+//!   prior shaping done by the caller) are dropped.
+//! - **Diagnostics.** Node-pool and evaluation-cache hit counters are
+//!   dropped: this engine neither pools nor caches.
+//! - **Divergence accounting.** On a root-install divergence,
+//!   `transitions` counts the steps actually attempted including the
+//!   failing one; Python reports the whole pooled batch. A mid-descent
+//!   divergence carries the provider's reason text (Python raises fixed
+//!   messages) and discards the in-flight simulation's cost, exactly as
+//!   Python does.
+//! - **Errors.** Caller contract violations (invalid config, terminal
+//!   root, empty legal masks, wrong prior lengths) panic; only provider
+//!   divergence is reported in-band via
+//!   [`SearchResult::failure`](result::SearchResult::failure).
 
 pub mod config;
 pub mod node;

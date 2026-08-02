@@ -20,6 +20,7 @@ A Rust implementation of the Monte Carlo Tree Search (MCTS) algorithm using an a
   - [Arena Allocator](#arena-allocator)
   - [MCTS Algorithm](#mcts-algorithm)
   - [State Trait](#state-trait)
+  - [Joint Simultaneous-Move Search](#joint-simultaneous-move-search)
 - [License](#license)
 
 ## Introduction
@@ -147,6 +148,44 @@ pub trait State {
 ```
 
 By implementing this trait for your game or decision process, you can integrate it with the MCTS algorithm provided in this library. The `examples/tic_tac_toe.rs` and `examples/ultimate_tic_tac_toe.rs` examples offer complete, self-contained implementations of the `State` trait, including the optional fast paths for rollouts and in-place expansion.
+
+### Joint Simultaneous-Move Search
+
+The `joint` module is a second, independent search for **simultaneous-move
+zero-sum games**: both players commit an action at once, and the outcome may
+depend on hidden chance. It is a port of a Pokémon battle pipeline's search
+and shares nothing with the UCT implementation above — turn order, priors,
+seeded chance, and matrix solves have no representation in the `State` trait.
+
+Instead of visit counts and UCB, every tree node carries a dense payoff
+matrix over joint `(player, enemy)` action pairs, filled by chance-sampled
+transitions and solved with **regret matching+**: warm-started incremental
+solves during the descent, and a cold 2048-iteration equilibrium at the
+root. Descent samples joint actions from epsilon-mixed policies, resamples
+chance outcomes with decaying probability, shapes leaf values with a
+potential function, and stops on root-policy convergence, budget
+exhaustion, or starved learning. An optional adaptive router decides per
+search whether the tree descent is worth its cost or the root equilibrium
+alone suffices.
+
+Integration happens through three traits in `joint::traits`:
+
+- **`JointSnapshot`**: a game state — identity, per-side legal-action
+  bitmasks, terminal value, and an optional potential for value shaping.
+- **`TransitionProvider`**: steps a snapshot by a joint action pair and a
+  chance seed; may report a `Divergence`, which the search converts into a
+  well-formed fallback result instead of panicking.
+- **`Evaluator`**: produces per-side policy priors and a value estimate
+  (typically a neural network in the real pipeline; fixed tables in the
+  tests).
+
+Searches are driven by `joint::SimultaneousTreeSearch`, are fully
+deterministic for a given seed, and return a `SearchResult` with policies,
+sampled or argmax actions, the root payoff matrix, and rich diagnostics.
+See the `src/joint/mod.rs` module documentation for the algorithm details
+and the list of deliberate deviations from the Python source, and
+`benches/joint.rs` (`cargo bench --bench joint`) for benchmarks of the
+solver and end-to-end search hot paths.
 
 ## License
 
